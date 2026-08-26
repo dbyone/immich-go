@@ -7,14 +7,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"sync"
+	"time"
 
 	"immich-go/internal/auth"
 	"immich-go/internal/config"
+	"immich-go/internal/crypto"
 	"immich-go/internal/domain"
 	"immich-go/internal/jobs"
 	"immich-go/internal/ml"
 	"immich-go/internal/storage"
 	"immich-go/internal/store"
+	"immich-go/internal/vectordb"
 )
 
 type App struct {
@@ -25,6 +30,17 @@ type App struct {
 	Auth    *auth.Service
 	Storage *storage.Storage
 	Log     *slog.Logger
+
+	// Vectors is the DuckDB-backed vector store replacing the upstream
+	// pgvector layer: CLIP embeddings, face embeddings, people clusters.
+	Vectors *vectordb.Store
+
+	// Debounced re-computation: batches of face/smart-search jobs collapse
+	// into a single clustering / dedup run.
+	clusterMu    sync.Mutex
+	clusterTimer *time.Timer
+	dedupMu      sync.Mutex
+	dedupTimer   *time.Timer
 }
 
 func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
@@ -39,6 +55,18 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		CheckTimeout:       cfg.MachineLearning.AvailabilityChecks.Timeout,
 		CheckInterval:      cfg.MachineLearning.AvailabilityChecks.Interval,
 	}
+
+	vectorPath := cfg.VectorDBPath
+	if vectorPath == "" {
+		vectorPath = filepath.Join(cfg.MediaLocation, "vectors.duckdb")
+	}
+	vectors, err := vectordb.Open(vectorPath, cfg.VectorDim)
+	if err != nil {
+		return nil, fmt.Errorf("open vector db: %w", err)
+	}
+	log.Info("vector store ready", "path", vectorPath, "dim", cfg.VectorDim,
+		"sqlCosine", vectors.HasSQLCosine())
+
 	a := &App{
 		Cfg:     cfg,
 		Store:   st,
@@ -47,6 +75,7 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		Auth:    auth.NewService(st),
 		Storage: stg,
 		Log:     log,
+		Vectors: vectors,
 	}
 	a.registerJobs()
 	return a, nil
@@ -56,6 +85,7 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 func (a *App) Close() {
 	a.Jobs.Stop()
 	a.ML.Teardown()
+	_ = a.Vectors.Close()
 	_ = a.Store.Close()
 }
 
@@ -64,6 +94,8 @@ func (a *App) registerJobs() {
 	a.Jobs.Register(jobs.JobAssetGenerateThumbnails, jobs.QueueThumbnailGeneration, a.handleGenerateThumbnails)
 	a.Jobs.Register(jobs.JobSmartSearchRun, jobs.QueueSmartSearch, a.handleSmartSearch)
 	a.Jobs.Register(jobs.JobAssetDetectFaces, jobs.QueueFaceDetection, a.handleDetectFaces)
+	a.Jobs.Register(jobs.JobFacialRecognitionRun, jobs.QueueFacialRecognition, a.handleFacialRecognition)
+	a.Jobs.Register(jobs.JobDuplicateDetectionRun, jobs.QueueDuplicateDetection, a.handleDuplicateDetection)
 	a.Jobs.Register(jobs.JobAssetDelete, jobs.QueueBackgroundTask, a.handleAssetDelete)
 	a.Jobs.Register(jobs.JobOcrRun, jobs.QueueOCR, a.handleOCR)
 }
@@ -168,7 +200,18 @@ func (a *App) handleSmartSearch(ctx context.Context, _ string, data any) error {
 		return fmt.Errorf("smart search embedding: %w", err)
 	}
 	asset.SmartEmbedding = vec
-	return a.Store.Assets().Update(ctx, asset)
+	if err := a.Store.Assets().Update(ctx, asset); err != nil {
+		return err
+	}
+	// Persist the embedding in the DuckDB vector store (smart_search).
+	if err := a.Vectors.UpsertSmartSearch(ctx, asset.ID, asset.OwnerID,
+		a.Cfg.MachineLearning.Clip.ModelName, vec); err != nil {
+		return fmt.Errorf("vector upsert: %w", err)
+	}
+	if a.Cfg.MachineLearning.DuplicateDetection.Enabled {
+		a.scheduleDuplicateDetection()
+	}
+	return nil
 }
 
 func (a *App) handleDetectFaces(ctx context.Context, _ string, data any) error {
@@ -188,15 +231,132 @@ func (a *App) handleDetectFaces(ctx context.Context, _ string, data any) error {
 		return fmt.Errorf("face detection: %w", err)
 	}
 	faces := make([]domain.Face, 0, len(res.Faces))
-	for _, f := range res.Faces {
+	rows := make([]vectordb.FaceRow, 0, len(res.Faces))
+	for i, f := range res.Faces {
 		faces = append(faces, domain.Face{
 			BoundingBox: [4]int{f.BoundingBox.X1, f.BoundingBox.Y1, f.BoundingBox.X2, f.BoundingBox.Y2},
 			Embedding:   f.Embedding,
 			Score:       f.Score,
 		})
+		if vec, err := ml.DecodeVector(f.Embedding); err == nil {
+			rows = append(rows, vectordb.FaceRow{
+				AssetID:  asset.ID,
+				FaceIdx:  i,
+				Box:      [4]int{f.BoundingBox.X1, f.BoundingBox.Y1, f.BoundingBox.X2, f.BoundingBox.Y2},
+				Vec:      vec,
+			})
+		}
 	}
 	asset.Faces = faces
-	return a.Store.Assets().Update(ctx, asset)
+	if err := a.Store.Assets().Update(ctx, asset); err != nil {
+		return err
+	}
+	// Persist face embeddings for clustering (face_search).
+	if err := a.Vectors.UpsertFaces(ctx, asset.OwnerID, asset.ID, rows); err != nil {
+		return fmt.Errorf("face vector upsert: %w", err)
+	}
+	if a.Cfg.MachineLearning.FacialRecognition.Enabled {
+		a.scheduleClustering()
+	}
+	return nil
+}
+
+// handleFacialRecognition clusters every user's face embeddings into
+// people (DBSCAN over the DuckDB face_search table).
+func (a *App) handleFacialRecognition(ctx context.Context, _ string, _ any) error {
+	users, err := a.Store.Users().List(ctx)
+	if err != nil {
+		return err
+	}
+	total := 0
+	for _, u := range users {
+		people, err := a.Vectors.ClusterFaces(ctx, u.ID,
+			a.Cfg.MachineLearning.FacialRecognition.MaxDistance,
+			a.Cfg.MachineLearning.FacialRecognition.MinFaces)
+		if err != nil {
+			return fmt.Errorf("cluster faces for user %s: %w", u.ID, err)
+		}
+		total += people
+	}
+	if total > 0 {
+		a.Log.Info("face clustering complete", "people", total)
+	}
+	return nil
+}
+
+// handleDuplicateDetection groups visually near-identical assets via CLIP
+// embeddings and stamps duplicateId onto the assets.
+func (a *App) handleDuplicateDetection(ctx context.Context, _ string, _ any) error {
+	if !a.Cfg.MachineLearning.DuplicateDetection.Enabled {
+		return nil
+	}
+	users, err := a.Store.Users().List(ctx)
+	if err != nil {
+		return err
+	}
+	cleared := map[string]bool{}
+	for _, u := range users {
+		groups, err := a.Vectors.DetectDuplicates(ctx, u.ID, a.Cfg.MachineLearning.DuplicateDetection.MaxDistance)
+		if err != nil {
+			return fmt.Errorf("duplicate detection for user %s: %w", u.ID, err)
+		}
+		grouped := map[string]string{} // assetID -> groupID
+		for _, members := range groups {
+			groupID := crypto.NewUUID()
+			for _, id := range members {
+				grouped[id] = groupID
+			}
+		}
+		assets, _ := a.Store.Assets().ListForOwner(ctx, u.ID)
+		for _, asset := range assets {
+			want, inGroup := grouped[asset.ID]
+			switch {
+			case inGroup && (asset.DuplicateID == nil || *asset.DuplicateID != want):
+				asset.DuplicateID = &want
+				_ = a.Store.Assets().Update(ctx, asset)
+			case !inGroup && !cleared[asset.ID] && asset.DuplicateID != nil:
+				asset.DuplicateID = nil
+				_ = a.Store.Assets().Update(ctx, asset)
+			}
+			cleared[asset.ID] = true
+		}
+		if len(groups) > 0 {
+			a.Log.Info("duplicate detection complete", "user", u.ID, "groups", len(groups))
+		}
+	}
+	return nil
+}
+
+// scheduleClustering debounces DBSCAN runs while face-detection jobs keep
+// arriving, so a burst of uploads yields one clustering pass.
+func (a *App) scheduleClustering() {
+	debounce := a.Cfg.ClusterDebounce
+	if debounce <= 0 {
+		debounce = 5 * time.Second
+	}
+	a.clusterMu.Lock()
+	defer a.clusterMu.Unlock()
+	if a.clusterTimer != nil {
+		a.clusterTimer.Stop()
+	}
+	a.clusterTimer = time.AfterFunc(debounce, func() {
+		_ = a.Jobs.Queue(jobs.JobFacialRecognitionRun, map[string]string{"trigger": "debounce"})
+	})
+}
+
+func (a *App) scheduleDuplicateDetection() {
+	debounce := a.Cfg.ClusterDebounce
+	if debounce <= 0 {
+		debounce = 5 * time.Second
+	}
+	a.dedupMu.Lock()
+	defer a.dedupMu.Unlock()
+	if a.dedupTimer != nil {
+		a.dedupTimer.Stop()
+	}
+	a.dedupTimer = time.AfterFunc(debounce, func() {
+		_ = a.Jobs.Queue(jobs.JobDuplicateDetectionRun, map[string]string{"trigger": "debounce"})
+	})
 }
 
 func (a *App) handleOCR(ctx context.Context, _ string, data any) error {
@@ -235,6 +395,12 @@ func (a *App) handleAssetDelete(ctx context.Context, _ string, data any) error {
 	a.Storage.Remove(asset.OriginalPath)
 	a.Storage.Remove(asset.ThumbnailPath)
 	a.Storage.Remove(asset.PreviewPath)
+	if err := a.Vectors.DeleteSmartSearch(ctx, id); err != nil {
+		a.Log.Warn("vector cleanup failed", "asset", id, "err", err)
+	}
+	if err := a.Vectors.DeleteFaces(ctx, id); err != nil {
+		a.Log.Warn("face cleanup failed", "asset", id, "err", err)
+	}
 	return a.Store.Assets().Delete(ctx, id)
 }
 

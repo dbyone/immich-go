@@ -24,7 +24,8 @@ import (
 )
 
 // fakeML mimics the immich-machine-learning service: /ping and /predict
-// returning a fixed embedding for both image and text inputs.
+// returning fixed embeddings for both image and text inputs, plus one face
+// per image so the clustering pipeline has material to work with.
 func fakeML(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +34,9 @@ func fakeML(t *testing.T) *httptest.Server {
 			io.WriteString(w, "pong")
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/predict"):
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"clip":"[0.5,0.5,0.7071]","facial-recognition":[],"imageHeight":64,"imageWidth":64}`)
+			io.WriteString(w, `{"clip":"[0.5,0.5,0.7071]",`+
+				`"facial-recognition":[{"boundingBox":{"x1":1,"y1":1,"x2":30,"y2":30},"embedding":"[1.0,0.0,0.0]","score":0.9}],`+
+				`"imageHeight":64,"imageWidth":64}`)
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -42,12 +45,12 @@ func fakeML(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func testJPEG(t *testing.T) []byte {
+func testJPEG(t *testing.T, seed int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	for y := 0; y < 64; y++ {
 		for x := 0; x < 64; x++ {
-			img.Set(x, y, color.RGBA{R: uint8(x * 4), G: uint8(y * 4), B: 128, A: 255})
+			img.Set(x, y, color.RGBA{R: uint8((x * 4 + seed) % 256), G: uint8(y * 4), B: uint8(seed * 40), A: 255})
 		}
 	}
 	var buf bytes.Buffer
@@ -64,6 +67,10 @@ func newTestServer(t *testing.T) http.Handler {
 	cfg.MediaLocation = filepath.Join(t.TempDir(), "media")
 	cfg.MachineLearning.URLs = []string{mlSrv.URL}
 	cfg.MachineLearning.AvailabilityChecks.Enabled = false
+	// The fake ML service returns 3-dimensional vectors; the DuckDB vector
+	// store must be opened with the matching dimension.
+	cfg.VectorDim = 3
+	cfg.VectorDBPath = ":memory:"
 
 	a, err := app.New(cfg, memory.New(), slog.New(slog.DiscardHandler))
 	if err != nil {
@@ -169,12 +176,12 @@ func TestEndToEndFlow(t *testing.T) {
 		t.Fatalf("cookie auth failed: %d", cookieRec.Code)
 	}
 
-	// Upload an image.
-	jpg := testJPEG(t)
-	upload := func() (int, string) {
+	// Upload three distinct images; every pipeline stores the same fake
+	// CLIP embedding and the same fake face for each of them.
+	upload := func(jpg []byte, name string) (int, string) {
 		var buf bytes.Buffer
 		mw := multipart.NewWriter(&buf)
-		fw, _ := mw.CreateFormFile("assetData", "photo.jpg")
+		fw, _ := mw.CreateFormFile("assetData", name)
 		fw.Write(jpg)
 		mw.WriteField("fileCreatedAt", "2026-01-15T10:00:00.000Z")
 		mw.WriteField("fileModifiedAt", "2026-01-15T10:00:00.000Z")
@@ -188,36 +195,47 @@ func TestEndToEndFlow(t *testing.T) {
 		json.Unmarshal(rec.Body.Bytes(), &out)
 		return rec.Code, fmt.Sprint(out["status"])
 	}
-	code, status := upload()
-	if code != 201 || status != "created" {
-		t.Fatalf("upload: %d %s", code, status)
+	for i := 1; i <= 3; i++ {
+		code, status := upload(testJPEG(t, i), fmt.Sprintf("photo-%d.jpg", i))
+		if code != 201 || status != "created" {
+			t.Fatalf("upload %d: %d %s", i, code, status)
+		}
 	}
 
 	// Duplicate upload is detected via SHA-1 checksum.
-	code, status = upload()
+	code, status := upload(testJPEG(t, 1), "photo-1.jpg")
 	if code != 201 || status != "duplicate" {
 		t.Fatalf("duplicate upload: %d %s", code, status)
 	}
 
 	// The metadata job eventually fills dimensions; smart search needs the
-	// CLIP embedding from the background pipeline.
+	// CLIP embeddings persisted in the DuckDB vector store.
 	deadline := time.Now().Add(15 * time.Second)
-	var assetID string
+	var assetIDs []string
 	for time.Now().Before(deadline) {
 		_, page := doJSON(t, h, http.MethodPost, "/api/search/metadata", token, map[string]any{"size": 10})
 		list, _ := asMap(t, page)["assets"].([]any)
-		if len(list) > 0 {
-			first, _ := list[0].(map[string]any)
-			if first["width"] != nil {
-				assetID, _ = first["id"].(string)
-				break
+		ready := len(list) == 3
+		for _, item := range list {
+			entry, _ := item.(map[string]any)
+			if entry["width"] == nil {
+				ready = false
 			}
+		}
+		if ready {
+			for _, item := range list {
+				entry, _ := item.(map[string]any)
+				id, _ := entry["id"].(string)
+				assetIDs = append(assetIDs, id)
+			}
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if assetID == "" {
-		t.Fatal("metadata extraction never populated asset dimensions")
+	if len(assetIDs) != 3 {
+		t.Fatalf("metadata extraction did not complete for 3 assets, got %d", len(assetIDs))
 	}
+	assetID := assetIDs[0]
 
 	// Thumbnail endpoint serves the generated JPEG.
 	thumbReq := httptest.NewRequest(http.MethodGet, "/api/assets/"+assetID+"/thumbnail", nil)
@@ -228,14 +246,69 @@ func TestEndToEndFlow(t *testing.T) {
 		t.Fatalf("thumbnail: %d", thumbRec.Code)
 	}
 
-	// Smart search ranks via the machine-learning service.
-	code, body = doJSON(t, h, http.MethodPost, "/api/search/smart", token, map[string]any{"query": "gradient"})
-	if code != 200 {
-		t.Fatalf("smart search: %d %v", code, body)
+	// Smart search ranks via the machine-learning service and the DuckDB
+	// vector store (identical fake embeddings -> all three match).
+	var smartAssets []any
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		code, body = doJSON(t, h, http.MethodPost, "/api/search/smart", token, map[string]any{"query": "gradient"})
+		if code == 200 {
+			smartAssets, _ = asMap(t, body)["assets"].([]any)
+			if len(smartAssets) == 3 {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	smartAssets, _ := asMap(t, body)["assets"].([]any)
-	if len(smartAssets) != 1 {
-		t.Fatalf("smart search should return 1 asset, got %v", body)
+	if len(smartAssets) != 3 {
+		t.Fatalf("smart search should return 3 assets, got %d (%v)", len(smartAssets), body)
+	}
+
+	// Face clustering (DBSCAN over DuckDB face_search) creates one person
+	// spanning all three faces. Re-triggered while polling because the job
+	// only sees faces that detection has already persisted.
+	var people []any
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		doJSON(t, h, http.MethodPost, "/api/jobs", token, map[string]any{"name": "face-clustering"})
+		code, body = doJSON(t, h, http.MethodGet, "/api/people", token, nil)
+		if code == 200 {
+			people, _ = body.([]any)
+			if len(people) == 1 {
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if len(people) != 1 {
+		t.Fatalf("clustering should yield 1 person, got %v", people)
+	}
+	person, _ := people[0].(map[string]any)
+	if person["faceCount"] != float64(3) {
+		t.Fatalf("person faceCount should be 3: %v", person)
+	}
+
+	// Duplicate detection groups the visually identical assets (same
+	// re-trigger rationale as clustering).
+	var dupGroups []any
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		doJSON(t, h, http.MethodPost, "/api/jobs", token, map[string]any{"name": "detect-duplicates"})
+		code, body = doJSON(t, h, http.MethodGet, "/api/duplicates", token, nil)
+		if code == 200 {
+			dupGroups, _ = body.([]any)
+			if len(dupGroups) == 1 {
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if len(dupGroups) != 1 {
+		t.Fatalf("expected 1 duplicate group, got %v", dupGroups)
+	}
+	dup, _ := dupGroups[0].(map[string]any)
+	if dup["duplicateCount"] != float64(3) {
+		t.Fatalf("duplicate group should hold 3 assets: %v", dup)
 	}
 
 	// Timeline buckets (monthly, columnar bucket payload).
@@ -258,8 +331,8 @@ func TestEndToEndFlow(t *testing.T) {
 	columnar := map[string]any{}
 	json.Unmarshal(bucketRec.Body.Bytes(), &columnar)
 	ids, _ := columnar["id"].([]any)
-	if len(ids) != 1 {
-		t.Fatalf("columnar bucket should hold 1 asset: %v", columnar)
+	if len(ids) != 3 {
+		t.Fatalf("columnar bucket should hold 3 assets: %v", columnar)
 	}
 
 	// Albums.

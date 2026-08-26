@@ -123,12 +123,13 @@ JSON 对象，键为 task 名 + 图像尺寸：
 | NestJS 控制器 + `/api` 前缀 | `internal/api`（chi 路由） | 相同方法+路径+状态码+DTO 字段（camelCase、RFC3339 毫秒） |
 | Zod DTO | `internal/api/dto.go` 手写结构体 | 与 OpenAPI spec 字段一一对应 |
 | bcrypt(10) + 不透明 token + SHA-256 落库 | `internal/crypto` + `internal/auth` | 算法/常量/头名/Cookie 名一致；API Key 同构 |
-| Kysely + PostgreSQL | `internal/store`（接口）+ 内存实现 | 内存实现保证开箱即用；PostgreSQL 实现为下一步（见 §5） |
+| Kysely + PostgreSQL | `internal/store`（接口）+ 内存实现 | 内存实现保证开箱即用；实体元数据的 SQL 实现为下一步（见 §5） |
+| **pgvector / VectorChord 向量检索** | **`internal/vectordb`（内嵌 DuckDB）** | `smart_search`/`face_search`/`person` 表 + SQL `array_cosine_similarity` 余弦检索 + Go 侧 DBSCAN 人脸聚类 + 并查集近重复检测；向量数据持久化于 `<media>/vectors.duckdb`，无需 PostgreSQL/Redis。详见 docs/duckdb-vectordb.md |
 | BullMQ + Redis 19 队列 | `internal/jobs` 进程内队列 | 队列名/统计字段与 `/api/jobs` 完全一致 |
 | `MachineLearningRepository` | `internal/ml` 客户端 | **wire 级兼容**：/ping、/predict multipart（entries/image/text）、pipeline JSON、失败转移、嵌入解码（JSON 数组字符串）逐字段断言测试 |
 | sharp 缩略图 | `internal/media`（x/image CatmullRom） | thumbnail 250 / preview 1440 / JPEG q80；解码失败回退原图 |
 | 上传流式落盘 + SHA-1 | `internal/storage` | 相同目录布局（upload/thumbs/<userId>/<a>/<b>/…）与去重语义 |
-| pgvector 余弦检索 | 内存暴力余弦（`ml.CosineSimilarity`） | 语义一致，规模受限（见 §5） |
+| pgvector 余弦检索 | 内嵌 DuckDB（`ml.CosineSimilarity` Go 侧兜底） | 语义一致，brute-force；HNSW 可经 DuckDB vss 扩展引入 |
 | socket.io 事件 | 未移植 | — |
 | Web 前端静态托管 | 未移植 | 需配合官方 web 静态产物自行反代 |
 
@@ -145,17 +146,18 @@ JSON 对象，键为 task 名 + 图像尺寸：
 - assets：`POST /assets`（multipart 上传 + SHA-1 查重 + `x-immich-checksum` 预查）、`GET /assets/{id}`、`PUT /assets/{id}`、`PUT/DELETE /assets`（批量）、`GET /assets/statistics`、`POST /assets/bulk-upload-check`、`POST /assets/jobs`、`GET /assets/{id}/original|thumbnail|video/playback`
 - albums：列表/建/改/删、`PUT /albums/{id}/assets`、`DELETE /albums/{id}/assets`、`PUT /albums/assets`（批量）、`PUT /albums/{id}/users`、`DELETE /albums/{id}/user/{userId}`、`GET /albums/statistics`
 - timeline：`GET /timeline/buckets`、`GET /timeline/bucket`（列式 DTO）
-- search：`POST /search/metadata`、`POST /search/smart`（走 ML CLIP）
+- search：`POST /search/metadata`、`POST /search/smart`（走 ML CLIP → DuckDB 余弦）
+- 向量/聚类：`GET /people`（DuckDB DBSCAN 人物簇）、`GET /duplicates`（CLIP 近重复组）、`POST /jobs {"name":"face-clustering"|"detect-duplicates"}`（手动触发，immich-go 扩展）
 - trash：`POST /trash/empty`、`POST /trash/restore`
 - jobs：`GET /jobs`（19 队列统计）、`PUT /jobs/{name}`、`POST /jobs`
 - server：`about`、`config`、`features`、`storage`、`statistics`
 
 ## 5. 尚未移植 / 后续路线
 
-1. **PostgreSQL 持久化**：`internal/store` 已按仓库模式隔离，补 pgx 实现 + 迁移 SQL（对齐 §1.2 表结构）即可；当前内存存储重启即失。
+1. **实体元数据 SQL 持久化**：`internal/store` 已按仓库模式隔离，可把 user/asset/album 等落到 DuckDB 或 PostgreSQL + 迁移 SQL；当前实体仍在内存（向量/人物/去重组已持久化在 DuckDB）。
 2. **EXIF 完整解析**（exiftool 等价物）：当前仅宽高/文件大小；补 EXIF/TIFF 解析后回填 `asset_exif`。
 3. **视频转码 / HLS**（ffmpeg）、**thumbhash**、**存储模板迁移**（Handlebars 改名进 library/）。
-4. **人脸聚类与人像库**（facial-recognition 队列的 second stage）、OCR 结果入库。
+4. 人脸聚类的 person 命名/合并/拆分 API、OCR 结果入库。
 5. **共享链接、伙伴共享、同步协议 `/sync/stream`、记忆/标签/活动/通知/库扫描**等大块功能。
 6. **socket.io 实时事件**（需要 websocket 端点与 Redis adapter 语义）。
 7. **多 worker 进程模型**：当前单进程内嵌作业 worker；如需横向扩展可引入 asynq/river 等兼容 Redis 队列。

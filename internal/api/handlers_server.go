@@ -204,6 +204,15 @@ type jobCreateRequest struct {
 var manualJobs = map[string]bool{
 	"person-cleanup": true, "tag-cleanup": true, "user-cleanup": true,
 	"memory-cleanup": true, "memory-create": true, "backup-database": true,
+	// immich-go extensions driving the DuckDB vector pipeline:
+	"face-clustering": true, // DBSCAN over face_search -> people
+	"detect-duplicates": true, // CLIP near-duplicate groups
+}
+
+// manualJobTriggers maps manual job names to queued job names.
+var manualJobTriggers = map[string]string{
+	"face-clustering":   jobs.JobFacialRecognitionRun,
+	"detect-duplicates": jobs.JobDuplicateDetectionRun,
 }
 
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +223,12 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &req); err != nil || !manualJobs[req.Name] {
 		writeError(w, http.StatusBadRequest, "invalid manual job name")
 		return
+	}
+	if jobName, ok := manualJobTriggers[req.Name]; ok {
+		if err := s.app.Jobs.Queue(jobName, map[string]string{"trigger": "manual"}); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	// Manual maintenance jobs are accepted; this port performs them lazily.
 	w.WriteHeader(http.StatusAccepted)

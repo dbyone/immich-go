@@ -287,9 +287,10 @@ func (s *Server) applyMetadataFilters(assets []*domain.Asset, req *searchRequest
 	return out
 }
 
-// searchSmart runs a CLIP text query against the machine-learning service
-// and ranks the owner's assets by cosine similarity — the same pipeline as
-// SearchService.searchSmart upstream.
+// searchSmart runs a CLIP text query against the machine-learning
+// service and ranks the owner's assets by cosine similarity inside the
+// DuckDB vector store — the same pipeline as SearchService.searchSmart
+// upstream, with pgvector replaced by DuckDB.
 func (s *Server) searchSmart(w http.ResponseWriter, r *http.Request) {
 	a := caller(w, r)
 	if a == nil {
@@ -318,34 +319,29 @@ func (s *Server) searchSmart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
-	req.WithDeleted = false
-	req.Query = "" // metadata filters already applied below if provided
-	type scored struct {
-		asset *domain.Asset
-		score float64
+	hits, err := s.app.Vectors.SearchSmart(r.Context(), a.User.ID, queryVec, 1000)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Vector search failed: "+err.Error())
+		return
 	}
-	var ranked []scored
-	for _, asset := range assets {
-		if asset.DeletedAt != nil || len(asset.SmartEmbedding) == 0 {
-			continue
-		}
-		ranked = append(ranked, scored{asset, ml.CosineSimilarity(queryVec, asset.SmartEmbedding)})
-	}
-	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
 
 	page, size := pageParams(req.Page, req.Size)
 	start := (page - 1) * size
-	if start > len(ranked) {
-		start = len(ranked)
+	if start > len(hits) {
+		start = len(hits)
 	}
 	end := start + size
-	if end > len(ranked) {
-		end = len(ranked)
+	if end > len(hits) {
+		end = len(hits)
 	}
+
 	out := make([]AssetResponse, 0, end-start)
-	for _, hit := range ranked[start:end] {
-		out = append(out, s.assetResponse(hit.asset, req.WithExif))
+	for _, hit := range hits[start:end] {
+		asset, err := s.app.Store.Assets().Get(r.Context(), hit.AssetID)
+		if err != nil || asset.OwnerID != a.User.ID {
+			continue
+		}
+		out = append(out, s.assetResponse(asset, req.WithExif))
 	}
 	writeJSON(w, http.StatusOK, SearchResponse{Albums: []AlbumResponse{}, Assets: out})
 }

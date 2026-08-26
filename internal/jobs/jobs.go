@@ -66,6 +66,7 @@ const (
 	JobAssetDetectFaces        = "AssetDetectFaces"
 	JobFacialRecognitionRun    = "FacialRecognition"
 	JobSmartSearchRun          = "SmartSearch"
+	JobDuplicateDetectionRun   = "DuplicateDetection"
 	JobOcrRun                  = "Ocr"
 	JobAssetDelete             = "AssetDelete"
 	JobUserDelete              = "UserDelete"

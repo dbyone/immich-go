@@ -36,9 +36,15 @@ type MachineLearning struct {
 		ModelName string
 	}
 	FacialRecognition struct {
-		Enabled   bool
-		ModelName string
-		MinScore  float64
+		Enabled     bool
+		ModelName   string
+		MinScore    float64
+		MaxDistance float64 // DBSCAN cosine-distance threshold for clustering
+		MinFaces    int     // minimum cluster size to become a person
+	}
+	DuplicateDetection struct {
+		Enabled     bool
+		MaxDistance float64 // CLIP distance below which assets are duplicates
 	}
 	OCR struct {
 		Enabled            bool
@@ -53,6 +59,15 @@ type Config struct {
 	Port          int
 	Host          string
 	MediaLocation string
+
+	// Vector store (DuckDB) — replaces the upstream pgvector/VectorChord
+	// layer. Path defaults to <media>/vectors.duckdb; Dim must match the
+	// embedding dimension of the configured models (512 by default).
+	VectorDBPath string
+	VectorDim    int
+
+	// Debounce window batching clustering runs after face detection.
+	ClusterDebounce time.Duration
 
 	// Session token lifetime (official server: none by default — sessions
 	// live until logged out; 400-day cookie maxAge).
@@ -97,9 +112,12 @@ func envFloat(key string, def float64) float64 {
 // same defaults the upstream Immich server uses.
 func Load() *Config {
 	c := &Config{
-		Port:          envInt("IMMICH_PORT", DefaultPort),
-		Host:          env("IMMICH_HOST", DefaultHost),
-		MediaLocation: env("IMMICH_MEDIA_LOCATION", DefaultMediaLocation),
+		Port:            envInt("IMMICH_PORT", DefaultPort),
+		Host:            env("IMMICH_HOST", DefaultHost),
+		MediaLocation:   env("IMMICH_MEDIA_LOCATION", DefaultMediaLocation),
+		VectorDBPath:    env("IMMICH_VECTOR_DB", ""),
+		VectorDim:       envInt("IMMICH_VECTOR_DIM", 512),
+		ClusterDebounce: time.Duration(envInt("IMMICH_CLUSTER_DEBOUNCE_MS", 5000)) * time.Millisecond,
 	}
 
 	ml := &c.MachineLearning
@@ -115,6 +133,11 @@ func Load() *Config {
 	ml.FacialRecognition.Enabled = envBool("IMMICH_MACHINE_LEARNING_FACIAL_RECOGNITION_ENABLED", true)
 	ml.FacialRecognition.ModelName = env("IMMICH_MACHINE_LEARNING_FACIAL_RECOGNITION_MODEL", "buffalo_l")
 	ml.FacialRecognition.MinScore = envFloat("IMMICH_MACHINE_LEARNING_FACIAL_RECOGNITION_MIN_SCORE", 0.7)
+	ml.FacialRecognition.MaxDistance = envFloat("IMMICH_MACHINE_LEARNING_FACIAL_RECOGNITION_MAX_DISTANCE", 0.5)
+	ml.FacialRecognition.MinFaces = envInt("IMMICH_MACHINE_LEARNING_FACIAL_RECOGNITION_MIN_FACES", 3)
+
+	ml.DuplicateDetection.Enabled = envBool("IMMICH_MACHINE_LEARNING_DUPLICATE_DETECTION_ENABLED", true)
+	ml.DuplicateDetection.MaxDistance = envFloat("IMMICH_MACHINE_LEARNING_DUPLICATE_DETECTION_MAX_DISTANCE", 0.01)
 
 	ml.OCR.Enabled = envBool("IMMICH_MACHINE_LEARNING_OCR_ENABLED", true)
 	ml.OCR.ModelName = env("IMMICH_MACHINE_LEARNING_OCR_MODEL", "PP-OCRv5_mobile")

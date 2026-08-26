@@ -41,6 +41,11 @@ immich-go 的机器学习客户端（`internal/ml`）与官方 `immich-machine-l
 
 `POST /api/search/smart {"query":"..."}` → `EncodeText` → 余弦排序 → 响应。
 
+嵌入与人脸向量持久化在内嵌 DuckDB 向量库（`internal/vectordb`），
+检测/编码完成后自动防抖触发 **DBSCAN 人脸聚类**（生成 `/api/people` 的人物）
+与 **CLIP 近重复检测**（`/api/duplicates`），也可通过
+`POST /api/jobs {"name":"face-clustering"}` / `{"name":"detect-duplicates"}` 手动触发。
+
 ## 与真实服务联调
 
 ```yaml

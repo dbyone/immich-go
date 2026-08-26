@@ -98,6 +98,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/search/metadata", s.searchMetadata)
 			r.Post("/search/smart", s.searchSmart)
 
+			r.Get("/people", s.listPeople)
+			r.Get("/duplicates", s.listDuplicates)
+
 			r.Post("/trash/empty", s.emptyTrash)
 			r.Post("/trash/restore", s.restoreTrash)
 

@@ -3,6 +3,13 @@
 Immich 服务端的 Go 语言实现，**保持对官方 `immich-machine-learning` 服务的接口兼容**，
 API 面向 Immich v3.1.0（`/api` 前缀、相同路由、相同 DTO、相同鉴权模型）。
 
+**向量数据库与聚类分析使用内嵌 DuckDB**（替代上游 pgvector/VectorChord + Redis）：
+CLIP/人脸向量、SQL 余弦检索、DBSCAN 人脸聚类（自动生成人物）、CLIP 近重复检测，
+全部内置于单个二进制，向量数据持久化在 `<media>/vectors.duckdb`。
+
+> 注意：go-duckdb 需要 CGO —— 本机构建需安装 gcc/g++（Windows 用
+> [WinLibs](https://winlibs.com/) / MSYS2），Docker 构建已内置（见 Dockerfile）。
+
 ## 快速开始
 
 ```bash
@@ -54,15 +61,16 @@ curl -X POST localhost:2283/api/search/smart \
 cmd/immich-go/          入口
 internal/config/        环境变量配置（与上游同名）
 internal/domain/        实体（对齐上游表结构语义）
-internal/store/         持久化接口 + 内存实现
+internal/store/         持久化接口 + 内存实现（实体元数据）
+internal/vectordb/      DuckDB 向量库（CLIP/人脸向量、SQL 余弦检索、DBSCAN 聚类、近重复检测）★
 internal/auth/          会话/API Key 鉴权（与上游 AuthService.validate 同优先级）
 internal/ml/            immich-machine-learning 客户端（wire 级兼容）★
 internal/api/           REST handlers（DTO 对齐 OpenAPI spec）
 internal/jobs/          进程内作业队列（19 个队列名与 /api/jobs 一致）
 internal/media/         缩略图生成（250/1440, JPEG q80）
 internal/storage/       磁盘布局（upload/thumbs/<userId>/<a>/<b>/...）
-internal/app/           装配 + 后台作业流水线（元数据→缩略图→CLIP→人脸）
-docs/                   架构分析与 ML 接口兼容文档
+internal/app/           装配 + 后台作业流水线（元数据→缩略图→CLIP→人脸→聚类/去重）
+docs/                   架构分析、ML 兼容、DuckDB 向量库文档
 ```
 
 ## 与官方组件的兼容关系
@@ -70,12 +78,14 @@ docs/                   架构分析与 ML 接口兼容文档
 | 组件 | 状态 |
 |---|---|
 | immich-machine-learning（容器） | ✅ 直接对接（`/ping`、`/predict` multipart、多实例故障转移） |
-| Immich API（v3.1.0 子集） | ✅ auth/assets/albums/timeline/search/jobs/trash/sessions/api-keys/users/server |
-| 官方 Web / 移动端 | ⚠️ 核心上传-浏览-相册-搜索链路可用；未覆盖功能（伙伴、共享链接、sync、人脸库等）会缺失 |
-| PostgreSQL 持久化 | ❌ 当前为内存存储，重启即失（store 接口已为 PG 实现预留） |
+| 向量库 | ✅ 内嵌 DuckDB（smart_search/face_search/person 表、SQL 余弦、DBSCAN 人物聚类、近重复检测），无需 PostgreSQL/Redis |
+| Immich API（v3.1.0 子集） | ✅ auth/assets/albums/timeline/search/jobs/trash/sessions/api-keys/users/server/people/duplicates |
+| 官方 Web / 移动端 | ⚠️ 核心上传-浏览-相册-搜索链路可用；未覆盖功能（伙伴、共享链接、sync 等）会缺失 |
+| 实体元数据持久化 | ❌ 用户/资产/相册等当前为内存存储（向量数据已持久化到 DuckDB；store 接口为 SQL 实现预留） |
 
-详见 [docs/architecture-analysis.md](docs/architecture-analysis.md)（上游架构分析 + 移植映射 + 路线图）
-与 [docs/ml-interface.md](docs/ml-interface.md)（ML 接口兼容矩阵）。
+详见 [docs/architecture-analysis.md](docs/architecture-analysis.md)（上游架构分析 + 移植映射 + 路线图）、
+[docs/ml-interface.md](docs/ml-interface.md)（ML 接口兼容矩阵）与
+[docs/duckdb-vectordb.md](docs/duckdb-vectordb.md)（DuckDB 向量库与聚类分析）。
 
 ## 测试
 
