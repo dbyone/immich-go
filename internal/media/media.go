@@ -82,6 +82,46 @@ func resizeToJPEG(src image.Image, maxEdge int) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// CropFace crops the face bounding box (x1,y1,x2,y2) from an image on
+// disk with a small margin and renders a maxEdge JPEG — the person avatar.
+func CropFace(path string, box [4]int, maxEdge int) ([]byte, error) {
+	src, err := loadImage(path)
+	if err != nil {
+		return os.ReadFile(path)
+	}
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	// 25% margin around the detected face, floored at 8px.
+	m := (box[2] - box[0]) / 4
+	if m < 8 {
+		m = 8
+	}
+	x1 := clampInt(box[0]-m, 0, w-1)
+	y1 := clampInt(box[1]-m, 0, h-1)
+	x2 := clampInt(box[2]+m, x1+1, w)
+	y2 := clampInt(box[3]+m, y1+1, h)
+
+	type subImager interface {
+		SubImage(r image.Rectangle) image.Image
+	}
+	croppable, ok := src.(subImager)
+	if !ok {
+		return resizeToJPEG(src, maxEdge)
+	}
+	crop := croppable.SubImage(image.Rect(b.Min.X+x1, b.Min.Y+y1, b.Min.X+x2, b.Min.Y+y2))
+	return resizeToJPEG(crop, maxEdge)
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 func loadImage(path string) (image.Image, error) {
 	f, err := os.Open(path)
 	if err != nil {

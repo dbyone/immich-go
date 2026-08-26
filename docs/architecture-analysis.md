@@ -148,16 +148,27 @@ JSON 对象，键为 task 名 + 图像尺寸：
 - timeline：`GET /timeline/buckets`、`GET /timeline/bucket`（列式 DTO）
 - search：`POST /search/metadata`、`POST /search/smart`（走 ML CLIP → DuckDB 余弦）
 - 向量/聚类：`GET /people`（DuckDB DBSCAN 人物簇）、`GET /duplicates`（CLIP 近重复组）、`POST /jobs {"name":"face-clustering"|"detect-duplicates"}`（手动触发，immich-go 扩展）
+- people 全套：创建/改名/收藏/隐藏/删除（单个+批量）、`POST /people/{id}/merge`（合并）、`PUT /people/{id}/reassign`（人脸重归属）、`GET /people/{id}/statistics`、`GET /people/{id}/thumbnail`（从原图按人脸框裁剪头像）
+- memories 全套：列表/创建/统计/详情/更新/删除/资产增删
+- sync 基础版：`GET/POST/DELETE /sync/ack` + `POST /sync/stream`（NDJSON；AuthUser/User/Asset/Album/AlbumToAssets 类型的全量快照 + ack 跳过语义，未实现细粒度增量）
+- 重复项处理：`POST /duplicates/resolve`（保留/回收分组内资产并解散组）、`DELETE /duplicates[/{id}]`
+- 下载：`POST /download/info`（按 archiveSize 分卷预估）、`POST /download/archive`（zip 流式下载）
+- 地图/文件夹：`GET /map/markers`（带 GPS 资产聚合点）、`GET /map/reverse-geocode`（无本地地理数据，返回空表优雅降级）、`GET /view/folder[/unique-paths]`
+- Web 首启与偏好：`GET/PUT /users/me/preferences`（默认值深合并）、`GET/POST /system-metadata/admin-onboarding`、`GET /config[/defaults]`、`GET /public/config[/defaults]`、`GET /server/apk-links`、`GET /server/version-check`
 - trash：`POST /trash/empty`、`POST /trash/restore`
 - jobs：`GET /jobs`（19 队列统计）、`PUT /jobs/{name}`、`POST /jobs`
 - server：`about`、`config`、`features`、`storage`、`statistics`
 
 ## 5. 尚未移植 / 后续路线
 
-1. ~~实体元数据 SQL 持久化~~ ✅ 已完成：`internal/store/duckstore` 落库 DuckDB，重启实测恢复。
-2. ~~EXIF 完整解析~~ ✅ 已完成：`internal/exif` 纯 Go 解析 JPEG(APP1)/TIFF 的 IFD0 + ExifIFD + GPS（双端序、边界安全），回填拍摄时间/相机/镜头/GPS/描述/评分，方向 5-8 自动修正宽高；无 exiftool 依赖。视频流元数据（fps/codec，来自 ffprobe）仍未覆盖。
-3. **视频转码 / HLS**（ffmpeg）：视频元数据（时长/分辨率/fps/编码/旋转，纯 Go MP4 解析 + ffprobe 回退）与海报抽帧（ffmpeg）已完成；**转码与 HLS 自适应流仍未覆盖**。**thumbhash**、**存储模板迁移**（Handlebars 改名进 library/）待做。
-4. 人脸聚类的 person 命名/合并/拆分 API、OCR 结果入库。
-5. **共享链接、伙伴共享、同步协议 `/sync/stream`、记忆/标签/活动/通知/库扫描**等大块功能。
-6. **socket.io 实时事件**（需要 websocket 端点与 Redis adapter 语义）。
-7. **多 worker 进程模型**：当前单进程内嵌作业 worker；如需横向扩展可引入 asynq/river 等兼容 Redis 队列（实体与向量届时需评估 DuckDB 多进程写或迁移路径）。
+已按优先级完成 P0/P1 批次（覆盖 102/274 操作）：Web 首启（preferences/onboarding/config/public-config）、memories 全套、sync 基础版、people 管理（含合并/重归属/统计/头像裁剪）、duplicates resolve、download（info+zip 流）、map markers、view folder、apk-links、version-check。**设计性跳过：`/server/license*`（无需许可证）与 `/shared-links`（暂不实现）。**
+
+剩余缺口：
+
+1. **admin 域 32 操作**：用户管理（增删改/恢复/统计）、数据库备份、完整性报告、维护模式、通知模板——官方管理面板所需。
+2. **资产长尾**：`/assets/copy`、资产级 metadata CRUD 与 edits（beta 编辑）、`/assets/{id}/ocr`、HLS 自适应流 4 端点（依赖 ffmpeg 转码）。
+3. **用户长尾**：`PUT /users/me`、calendar-heatmap、license（跳过）、onboarding 3 端点、preferences（admin 侧 2 端点）、头像上传/读取。
+4. **共享链接（9，按决策暂缓）**、**partners（5）**、**stacks（7）**、**tags（9）**、**libraries（8，外部目录扫描）**、**activities（4，相册评论）**、**faces（4）**、**asset-files（4）**、**notifications（6）**、**workflows（8）**、**cluster-groups（7）**、**plugins（4）**。
+5. **sync 细粒度增量**：当前为「全量快照 + ack 跳过」，未实现 per-entity 变更流与删除事件（AssetDeleteV1 等）。
+6. **search 长尾**：explore/places/cities/person/random/statistics/suggestions（8）。
+7. **system-config（4）**、**system-metadata 其余 2**、**queues 新形态（5）**、**oauth（6）**、**socket.io 实时事件**、**多 worker 进程模型**。

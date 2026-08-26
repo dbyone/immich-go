@@ -85,11 +85,11 @@ docs/                   架构分析、ML 兼容、DuckDB 向量库文档
 |---|---|
 | immich-machine-learning（容器） | ✅ 直接对接（`/ping`、`/predict` multipart、多实例故障转移） |
 | 向量库 | ✅ 内嵌 DuckDB（smart_search/face_search/person 表、SQL 余弦、DBSCAN 人物聚类、近重复检测），无需 PostgreSQL/Redis |
-| 实体持久化 | ✅ 用户/会话/API Key/资产(含 EXIF)/相册 均持久化于 `<media>/immich.duckdb`，重启不丢（已实测重启恢复） |
+| 实体持久化 | ✅ 用户/会话/API Key/资产(含 EXIF)/相册/回忆/同步ack/系统元数据 均持久化于 `<media>/immich.duckdb`，重启不丢（已实测重启恢复） |
 | EXIF 元数据 | ✅ 纯 Go 解析 JPEG/TIFF（相机/镜头、原始拍摄时间、GPS 坐标、描述、评分、方向修正宽高），无 exiftool 依赖 |
 | 视频元数据 | ✅ 纯 Go 解析 MP4/MOV（时长、分辨率、fps、编码、旋转；ffprobe 处理其他容器）；缩略图经 ffmpeg 抽帧生成海报（无 ffmpeg 时优雅降级） |
-| Immich API（v3.1.0 子集） | ✅ auth/assets/albums/timeline/search/jobs/trash/sessions/api-keys/users/server/people/duplicates |
-| 官方 Web / 移动端 | ⚠️ 核心上传-浏览-相册-搜索链路可用；未覆盖功能（伙伴、共享链接、sync 等）会缺失 |
+| Immich API | ✅ 102/274 操作（37%）：auth/assets/albums/timeline/trash/search/jobs/queues-legacy/sessions/api-keys/users 基础/server(无 license)/people 全套/memories 全套/sync 基础版/duplicates 全套/download/map/view/config/public-config/onboarding 均可用；**shared-links 暂不实现**（设计决策） |
+| 官方 Web / 移动端 | ⚠️ 首启向导、偏好、回忆、人物管理、重复项处理、下载、地图、文件夹视图已可用；admin 面板、OAuth、伙伴、堆叠、标签、共享链接等未覆盖 |
 
 详见 [docs/architecture-analysis.md](docs/architecture-analysis.md)（上游架构分析 + 移植映射 + 路线图）、
 [docs/ml-interface.md](docs/ml-interface.md)（ML 接口兼容矩阵）与

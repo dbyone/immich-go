@@ -5,6 +5,7 @@ package memory
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"immich-go/internal/domain"
@@ -18,6 +19,9 @@ type Memory struct {
 	apiKeys  map[string]*domain.APIKey
 	assets   map[string]*domain.Asset
 	albums   map[string]*domain.Album
+	memories map[string]*domain.Memory
+	syncAcks map[string]map[string]bool // userID -> ack -> exists
+	meta     map[string]string
 }
 
 func New() *Memory {
@@ -27,16 +31,22 @@ func New() *Memory {
 		apiKeys:  map[string]*domain.APIKey{},
 		assets:   map[string]*domain.Asset{},
 		albums:   map[string]*domain.Album{},
+		memories: map[string]*domain.Memory{},
+		syncAcks: map[string]map[string]bool{},
+		meta:     map[string]string{},
 	}
 }
 
 func (m *Memory) Close() error { return nil }
 
-func (m *Memory) Users() store.UserStore         { return (*userStore)(m) }
-func (m *Memory) Sessions() store.SessionStore   { return (*sessionStore)(m) }
-func (m *Memory) APIKeys() store.APIKeyStore     { return (*apiKeyStore)(m) }
-func (m *Memory) Assets() store.AssetStore       { return (*assetStore)(m) }
-func (m *Memory) Albums() store.AlbumStore       { return (*albumStore)(m) }
+func (m *Memory) Users() store.UserStore        { return (*userStore)(m) }
+func (m *Memory) Sessions() store.SessionStore  { return (*sessionStore)(m) }
+func (m *Memory) APIKeys() store.APIKeyStore    { return (*apiKeyStore)(m) }
+func (m *Memory) Assets() store.AssetStore      { return (*assetStore)(m) }
+func (m *Memory) Albums() store.AlbumStore      { return (*albumStore)(m) }
+func (m *Memory) Memories() store.MemoryStore   { return (*memoryStore)(m) }
+func (m *Memory) SyncAcks() store.SyncAckStore  { return (*syncAckStore)(m) }
+func (m *Memory) Metadata() store.MetadataStore { return (*metadataStore)(m) }
 
 // clone helpers keep references handed out of the store independent of the
 // stored copies, mirroring how a database returns fresh rows.
@@ -440,4 +450,140 @@ func (s *albumStore) listFiltered(match func(*domain.Album) bool) ([]*domain.Alb
 		}
 	}
 	return out, nil
+}
+
+// ---- memories ----
+
+type memoryStore Memory
+
+func cloneMemory(m *domain.Memory) *domain.Memory {
+	c := *m
+	c.AssetIDs = append([]string(nil), m.AssetIDs...)
+	return &c
+}
+
+func (s *memoryStore) Create(_ context.Context, m *domain.Memory) error {
+	mm := (*Memory)(s)
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	mm.memories[m.ID] = cloneMemory(m)
+	return nil
+}
+
+func (s *memoryStore) Update(_ context.Context, m *domain.Memory) error {
+	mm := (*Memory)(s)
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	if _, ok := mm.memories[m.ID]; !ok {
+		return store.ErrNotFound
+	}
+	mm.memories[m.ID] = cloneMemory(m)
+	return nil
+}
+
+func (s *memoryStore) Delete(_ context.Context, id string) error {
+	mm := (*Memory)(s)
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	delete(mm.memories, id)
+	return nil
+}
+
+func (s *memoryStore) Get(_ context.Context, id string) (*domain.Memory, error) {
+	mm := (*Memory)(s)
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+	m, ok := mm.memories[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return cloneMemory(m), nil
+}
+
+func (s *memoryStore) ListForOwner(_ context.Context, ownerID string) ([]*domain.Memory, error) {
+	mm := (*Memory)(s)
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+	var out []*domain.Memory
+	for _, m := range mm.memories {
+		if m.OwnerID == ownerID && m.DeletedAt == nil {
+			out = append(out, cloneMemory(m))
+		}
+	}
+	return out, nil
+}
+
+// ---- sync acks ----
+
+type syncAckStore Memory
+
+func (s *syncAckStore) List(_ context.Context, userID string) ([]domain.SyncAck, error) {
+	mm := (*Memory)(s)
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+	var out []domain.SyncAck
+	for ack := range mm.syncAcks[userID] {
+		parts := strings.SplitN(ack, ":", 2)
+		if len(parts) == 2 {
+			out = append(out, domain.SyncAck{Type: parts[0], Ack: ack})
+		}
+	}
+	return out, nil
+}
+
+func (s *syncAckStore) Put(_ context.Context, userID string, acks []domain.SyncAck) error {
+	mm := (*Memory)(s)
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	set := mm.syncAcks[userID]
+	if set == nil {
+		set = map[string]bool{}
+		mm.syncAcks[userID] = set
+	}
+	for _, a := range acks {
+		set[a.Ack] = true
+	}
+	return nil
+}
+
+func (s *syncAckStore) DeleteTypes(_ context.Context, userID string, types []string) error {
+	mm := (*Memory)(s)
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	if len(types) == 0 {
+		delete(mm.syncAcks, userID)
+		return nil
+	}
+	drop := map[string]bool{}
+	for _, t := range types {
+		drop[t] = true
+	}
+	set := mm.syncAcks[userID]
+	for ack := range set {
+		parts := strings.SplitN(ack, ":", 2)
+		if len(parts) == 2 && drop[parts[0]] {
+			delete(set, ack)
+		}
+	}
+	return nil
+}
+
+// ---- metadata ----
+
+type metadataStore Memory
+
+func (s *metadataStore) Get(_ context.Context, key string) (string, bool, error) {
+	mm := (*Memory)(s)
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+	v, ok := mm.meta[key]
+	return v, ok, nil
+}
+
+func (s *metadataStore) Set(_ context.Context, key, value string) error {
+	mm := (*Memory)(s)
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	mm.meta[key] = value
+	return nil
 }

@@ -67,12 +67,34 @@ type AlbumStore interface {
 	ListForOwner(ctx context.Context, ownerID string) ([]*domain.Album, error)
 }
 
+type MemoryStore interface {
+	Create(ctx context.Context, m *domain.Memory) error
+	Update(ctx context.Context, m *domain.Memory) error
+	Delete(ctx context.Context, id string) error
+	Get(ctx context.Context, id string) (*domain.Memory, error)
+	ListForOwner(ctx context.Context, ownerID string) ([]*domain.Memory, error)
+}
+
+type SyncAckStore interface {
+	List(ctx context.Context, userID string) ([]domain.SyncAck, error)
+	Put(ctx context.Context, userID string, acks []domain.SyncAck) error
+	DeleteTypes(ctx context.Context, userID string, types []string) error
+}
+
+type MetadataStore interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+	Set(ctx context.Context, key, value string) error
+}
+
 type Store interface {
 	Users() UserStore
 	Sessions() SessionStore
 	APIKeys() APIKeyStore
 	Assets() AssetStore
 	Albums() AlbumStore
+	Memories() MemoryStore
+	SyncAcks() SyncAckStore
+	Metadata() MetadataStore
 
 	// Close releases resources held by the store.
 	Close() error

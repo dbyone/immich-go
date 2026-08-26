@@ -39,6 +39,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/server/version", s.serverVersion)
 		r.Get("/server/version-history", s.serverVersionHistory)
 		r.Get("/server/media-types", s.serverMediaTypes)
+		r.Get("/public/config", s.getPublicConfig)
+		r.Get("/public/config/defaults", s.getPublicConfigDefaults)
 		r.Post("/auth/login", s.authLogin)
 		r.Post("/auth/admin-sign-up", s.authAdminSignUp)
 
@@ -54,7 +56,17 @@ func (s *Server) Router() http.Handler {
 			r.Get("/users", s.listUsers)
 			r.Get("/users/me", s.getMe)
 			r.Patch("/users/me", s.updateMe)
+			r.Get("/users/me/preferences", s.getMyPreferences)
+			r.Put("/users/me/preferences", s.updateMyPreferences)
 			r.Get("/users/{id}", s.getUser)
+
+			// user-facing config + onboarding state
+			r.Get("/config", s.getUserConfig)
+			r.Get("/config/defaults", s.getUserConfigDefaults)
+			r.Get("/system-metadata/admin-onboarding", s.getAdminOnboarding)
+			r.Post("/system-metadata/admin-onboarding", s.updateAdminOnboarding)
+			r.Get("/server/apk-links", s.serverApkLinks)
+			r.Get("/server/version-check", s.serverVersionCheck)
 
 			r.Get("/api-keys", s.listAPIKeys)
 			r.Post("/api-keys", s.createAPIKey)
@@ -99,7 +111,44 @@ func (s *Server) Router() http.Handler {
 			r.Post("/search/smart", s.searchSmart)
 
 			r.Get("/people", s.listPeople)
+			r.Post("/people", s.createPerson)
+			r.Put("/people", s.updatePeopleBulk)
+			r.Delete("/people", s.deletePeopleBulk)
+			r.Get("/people/{id}", s.getPersonDetail)
+			r.Put("/people/{id}", s.updatePerson)
+			r.Delete("/people/{id}", s.deletePerson)
+			r.Post("/people/{id}/merge", s.mergePerson)
+			r.Put("/people/{id}/reassign", s.reassignFaces)
+			r.Get("/people/{id}/statistics", s.personStatistics)
+			r.Get("/people/{id}/thumbnail", s.personThumbnail)
 			r.Get("/duplicates", s.listDuplicates)
+			r.Post("/duplicates/resolve", s.resolveDuplicates)
+			r.Delete("/duplicates", s.deleteDuplicatesBulk)
+			r.Delete("/duplicates/{id}", s.deleteDuplicateGroup)
+
+			// memories
+			r.Get("/memories", s.listMemories)
+			r.Post("/memories", s.createMemory)
+			r.Get("/memories/statistics", s.memoriesStatistics)
+			r.Get("/memories/{id}", s.getMemory)
+			r.Put("/memories/{id}", s.updateMemory)
+			r.Delete("/memories/{id}", s.deleteMemory)
+			r.Put("/memories/{id}/assets", s.memoryAssetsUpdate(true))
+			r.Delete("/memories/{id}/assets", s.memoryAssetsUpdate(false))
+
+			// sync (basic)
+			r.Get("/sync/ack", s.getSyncAck)
+			r.Post("/sync/ack", s.sendSyncAck)
+			r.Delete("/sync/ack", s.deleteSyncAck)
+			r.Post("/sync/stream", s.syncStream)
+
+			// download / map / folder view
+			r.Post("/download/info", s.downloadInfo)
+			r.Post("/download/archive", s.downloadArchive)
+			r.Get("/map/markers", s.mapMarkers)
+			r.Get("/map/reverse-geocode", s.reverseGeocode)
+			r.Get("/view/folder", s.folderView)
+			r.Get("/view/folder/unique-paths", s.folderUniquePaths)
 
 			r.Post("/trash/empty", s.emptyTrash)
 			r.Post("/trash/restore", s.restoreTrash)

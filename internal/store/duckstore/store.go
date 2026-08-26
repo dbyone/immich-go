@@ -68,6 +68,9 @@ func (s *Store) Sessions() store.SessionStore { return (*sessionStore)(s) }
 func (s *Store) APIKeys() store.APIKeyStore   { return (*apiKeyStore)(s) }
 func (s *Store) Assets() store.AssetStore     { return (*assetStore)(s) }
 func (s *Store) Albums() store.AlbumStore     { return (*albumStore)(s) }
+func (s *Store) Memories() store.MemoryStore  { return (*memoryStore)(s) }
+func (s *Store) SyncAcks() store.SyncAckStore { return (*syncAckStore)(s) }
+func (s *Store) Metadata() store.MetadataStore { return (*metadataStore)(s) }
 
 func (s *Store) init() error {
 	statements := []string{
@@ -87,6 +90,8 @@ func (s *Store) init() error {
 			deleted_at TIMESTAMP
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx ON users (email)`,
+		// Databases created before per-user preferences existed.
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences VARCHAR`,
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id VARCHAR PRIMARY KEY,
 			token_hash BLOB NOT NULL,
@@ -182,6 +187,37 @@ func (s *Store) init() error {
 			user_id VARCHAR NOT NULL,
 			role VARCHAR NOT NULL DEFAULT 'editor',
 			PRIMARY KEY (album_id, user_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS memories (
+			id VARCHAR PRIMARY KEY,
+			owner_id VARCHAR NOT NULL,
+			type VARCHAR NOT NULL DEFAULT 'on_this_day',
+			data VARCHAR NOT NULL DEFAULT '{}',
+			memory_at TIMESTAMP NOT NULL,
+			show_at TIMESTAMP,
+			hide_at TIMESTAMP,
+			seen_at TIMESTAMP,
+			is_saved BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			deleted_at TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS memories_owner_idx ON memories (owner_id)`,
+		`CREATE TABLE IF NOT EXISTS memory_assets (
+			memory_id VARCHAR NOT NULL,
+			asset_id VARCHAR NOT NULL,
+			position INTEGER NOT NULL,
+			PRIMARY KEY (memory_id, asset_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS sync_acks (
+			user_id VARCHAR NOT NULL,
+			type VARCHAR NOT NULL,
+			ack VARCHAR NOT NULL,
+			PRIMARY KEY (user_id, type, ack)
+		)`,
+		`CREATE TABLE IF NOT EXISTS system_metadata (
+			key VARCHAR PRIMARY KEY,
+			value VARCHAR NOT NULL
 		)`,
 	}
 	for _, stmt := range statements {

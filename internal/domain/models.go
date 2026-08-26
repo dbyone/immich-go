@@ -32,6 +32,7 @@ type User struct {
 	ProfileImagePath     string
 	StorageLabel         string
 	IsOnboarded          bool
+	Preferences          string // user preferences as raw JSON ("" = defaults)
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            *time.Time
@@ -149,15 +150,26 @@ func (a *Album) HasAsset(assetID string) bool {
 	return a.AssetIndex != nil && a.AssetIndex[assetID]
 }
 
-// Memory is a short generated recap shown on the timeline; only the fields
-// needed for listing are modelled here.
+// Memory mirrors the upstream memory entity (currently "on_this_day").
+// Data holds the type-specific JSON payload ({"year": 2020}).
 type Memory struct {
 	ID        string
 	OwnerID   string
-	Title     string
-	Data      map[string]any
+	Type      string // on_this_day
+	Data      string // JSON payload
 	AssetIDs  []string
+	MemoryAt  time.Time
+	ShowAt    *time.Time
+	HideAt    *time.Time
+	SeenAt    *time.Time
+	IsSaved   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt *time.Time
+}
+
+// SyncAck is one acknowledged sync entity ("<Type>:<entityId>" pairs).
+type SyncAck struct {
+	Type string
+	Ack  string
 }

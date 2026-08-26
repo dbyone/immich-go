@@ -14,16 +14,20 @@ import (
 type userStore Store
 
 const userColumns = `id, email, password, name, is_admin, should_change_password,
-	avatar_color, profile_image_path, storage_label, is_onboarded,
+	avatar_color, profile_image_path, storage_label, is_onboarded, preferences,
 	created_at, updated_at, deleted_at`
 
 func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 	var u domain.User
 	var deleted sql.NullTime
+	var prefs sql.NullString
 	if err := scanner.Scan(&u.ID, &u.Email, &u.Password, &u.Name, &u.IsAdmin,
 		&u.ShouldChangePassword, &u.AvatarColor, &u.ProfileImagePath, &u.StorageLabel,
-		&u.IsOnboarded, &u.CreatedAt, &u.UpdatedAt, &deleted); err != nil {
+		&u.IsOnboarded, &prefs, &u.CreatedAt, &u.UpdatedAt, &deleted); err != nil {
 		return nil, err
+	}
+	if prefs.Valid {
+		u.Preferences = prefs.String
 	}
 	if deleted.Valid {
 		t := deleted.Time
@@ -35,9 +39,9 @@ func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 func (s *userStore) Create(ctx context.Context, u *domain.User) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO users (`+userColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Email, u.Password, u.Name, u.IsAdmin, u.ShouldChangePassword,
-		u.AvatarColor, u.ProfileImagePath, u.StorageLabel, u.IsOnboarded,
+		u.AvatarColor, u.ProfileImagePath, u.StorageLabel, u.IsOnboarded, u.Preferences,
 		u.CreatedAt, u.UpdatedAt, u.DeletedAt)
 	if isUniqueViolation(err) {
 		return store.ErrConflict
@@ -50,11 +54,11 @@ func (s *userStore) Update(ctx context.Context, u *domain.User) error {
 		UPDATE users SET
 			email = ?, password = ?, name = ?, is_admin = ?, should_change_password = ?,
 			avatar_color = ?, profile_image_path = ?, storage_label = ?, is_onboarded = ?,
-			updated_at = ?, deleted_at = ?
+			preferences = ?, updated_at = ?, deleted_at = ?
 		WHERE id = ?`,
 		u.Email, u.Password, u.Name, u.IsAdmin, u.ShouldChangePassword,
 		u.AvatarColor, u.ProfileImagePath, u.StorageLabel, u.IsOnboarded,
-		u.UpdatedAt, u.DeletedAt, u.ID)
+		u.Preferences, u.UpdatedAt, u.DeletedAt, u.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return store.ErrConflict

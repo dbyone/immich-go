@@ -30,6 +30,8 @@ type Person struct {
 	ID               string    `json:"id"`
 	OwnerID          string    `json:"-"`
 	Name             string    `json:"name"`
+	BirthDate        string    `json:"birthDate,omitempty"` // YYYY-MM-DD or ""
+	Color            string    `json:"color,omitempty"`
 	FaceCount        int       `json:"faceCount"`
 	ThumbnailAssetID string    `json:"thumbnailAssetId"`
 	IsHidden         bool      `json:"isHidden"`
@@ -137,6 +139,9 @@ func (s *Store) init() error {
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		)`,
+		// Columns added after the first release.
+		`ALTER TABLE person ADD COLUMN IF NOT EXISTS birth_date VARCHAR`,
+		`ALTER TABLE person ADD COLUMN IF NOT EXISTS color VARCHAR`,
 		`CREATE INDEX IF NOT EXISTS smart_search_owner_idx ON smart_search (owner_id)`,
 		`CREATE INDEX IF NOT EXISTS face_search_owner_idx ON face_search (owner_id)`,
 	}
@@ -389,7 +394,8 @@ func (s *Store) LoadFaces(ctx context.Context, ownerID string) ([]FaceRow, error
 // ListPersons returns the owner's people ordered by face count.
 func (s *Store) ListPersons(ctx context.Context, ownerID string) ([]Person, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, is_hidden, is_favorite, face_count, COALESCE(thumbnail_asset_id, ''), created_at, updated_at
+		SELECT id, name, is_hidden, is_favorite, face_count, COALESCE(thumbnail_asset_id, ''),
+			created_at, updated_at, COALESCE(birth_date, ''), COALESCE(color, '')
 		FROM person WHERE owner_id = ?
 		ORDER BY face_count DESC, created_at ASC`, ownerID)
 	if err != nil {
@@ -401,7 +407,8 @@ func (s *Store) ListPersons(ctx context.Context, ownerID string) ([]Person, erro
 		var p Person
 		p.OwnerID = ownerID
 		if err := rows.Scan(&p.ID, &p.Name, &p.IsHidden, &p.IsFavorite,
-			&p.FaceCount, &p.ThumbnailAssetID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.FaceCount, &p.ThumbnailAssetID, &p.CreatedAt, &p.UpdatedAt,
+			&p.BirthDate, &p.Color); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
