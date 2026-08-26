@@ -1,5 +1,7 @@
 # immich-go
 
+[![CI](https://github.com/dbyone/immich-go/actions/workflows/ci.yml/badge.svg)](https://github.com/dbyone/immich-go/actions/workflows/ci.yml)
+
 Immich 服务端的 Go 语言实现，**保持对官方 `immich-machine-learning` 服务的接口兼容**，
 API 面向 Immich v3.1.0（`/api` 前缀、相同路由、相同 DTO、相同鉴权模型）。
 
