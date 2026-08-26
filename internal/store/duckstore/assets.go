@@ -122,18 +122,18 @@ func upsertExif(ctx context.Context, tx *sql.Tx, a *domain.Asset) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO asset_exifs (asset_id, make, model, lens_model, file_size,
 			exif_width, exif_height, date_time_original, latitude, longitude,
-			city, state, country, description, rating)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			city, state, country, description, rating, fps)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (asset_id) DO UPDATE SET
 			make = excluded.make, model = excluded.model, lens_model = excluded.lens_model,
 			file_size = excluded.file_size, exif_width = excluded.exif_width,
 			exif_height = excluded.exif_height, date_time_original = excluded.date_time_original,
 			latitude = excluded.latitude, longitude = excluded.longitude,
 			city = excluded.city, state = excluded.state, country = excluded.country,
-			description = excluded.description, rating = excluded.rating`,
+			description = excluded.description, rating = excluded.rating, fps = excluded.fps`,
 		a.ID, e.Make, e.Model, e.LensModel, e.FileSize,
 		e.ExifWidth, e.ExifHeight, e.DateTimeOriginal, e.Latitude, e.Longitude,
-		e.City, e.State, e.Country, e.Description, e.Rating)
+		e.City, e.State, e.Country, e.Description, e.Rating, e.FPS)
 	return err
 }
 
@@ -156,14 +156,15 @@ func (s *assetStore) Delete(ctx context.Context, id string) error {
 func (s *assetStore) loadExif(ctx context.Context, a *domain.Asset) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT make, model, lens_model, file_size, exif_width, exif_height,
-			date_time_original, latitude, longitude, city, state, country, description, rating
+			date_time_original, latitude, longitude, city, state, country, description, rating, fps
 		FROM asset_exifs WHERE asset_id = ?`, a.ID)
 	var e domain.AssetExif
 	var fileSize, exifW, exifH, rating sql.NullInt64
 	var dateTime sql.NullTime
 	var lat, lon sql.NullFloat64
+	var fps sql.NullFloat64
 	err := row.Scan(&e.Make, &e.Model, &e.LensModel, &fileSize, &exifW, &exifH,
-		&dateTime, &lat, &lon, &e.City, &e.State, &e.Country, &e.Description, &rating)
+		&dateTime, &lat, &lon, &e.City, &e.State, &e.Country, &e.Description, &rating, &fps)
 	if err != nil {
 		return // no exif row
 	}
@@ -194,6 +195,10 @@ func (s *assetStore) loadExif(ctx context.Context, a *domain.Asset) {
 	if rating.Valid {
 		v := int(rating.Int64)
 		e.Rating = &v
+	}
+	if fps.Valid {
+		v := fps.Float64
+		e.FPS = &v
 	}
 	a.Exif = &e
 }

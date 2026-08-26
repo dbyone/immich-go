@@ -498,13 +498,18 @@ func (s *Server) getAssetThumbnail(w http.ResponseWriter, r *http.Request) {
 	if size == "thumbnail" && asset.ThumbnailPath != "" {
 		path = asset.ThumbnailPath
 	}
-	// Renditions are generated asynchronously; fall back to whatever
-	// rendition exists, then to the original.
 	if path == "" {
 		if asset.ThumbnailPath != "" {
 			path = asset.ThumbnailPath
-		} else {
+		} else if asset.Type == domain.AssetImage {
+			// Renditions are generated asynchronously; images can fall
+			// back to the original bytes.
 			path = asset.OriginalPath
+		} else {
+			// Videos without a poster frame have nothing image-like to
+			// serve (ffmpeg absent or job still pending).
+			writeError(w, http.StatusNotFound, "Preview not yet available")
+			return
 		}
 	}
 	contentType := "image/jpeg"

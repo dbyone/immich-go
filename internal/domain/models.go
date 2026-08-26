@@ -60,20 +60,21 @@ type APIKey struct {
 }
 
 type AssetExif struct {
-	Make           string
-	Model          string
-	LensModel      string
-	FileSize       int64
-	ExifWidth      *int
-	ExifHeight     *int
+	Make             string
+	Model            string
+	LensModel        string
+	FileSize         int64
+	ExifWidth        *int
+	ExifHeight       *int
 	DateTimeOriginal *time.Time
-	Latitude       *float64
-	Longitude      *float64
-	City           string
-	State          string
-	Country        string
-	Description    string
-	Rating         *int
+	Latitude         *float64
+	Longitude        *float64
+	City             string
+	State            string
+	Country          string
+	Description      string
+	Rating           *int
+	FPS              *float64 // video frame rate
 }
 
 type Face struct {

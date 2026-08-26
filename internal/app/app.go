@@ -17,11 +17,13 @@ import (
 	"immich-go/internal/domain"
 	"immich-go/internal/exif"
 	"immich-go/internal/jobs"
+	"immich-go/internal/media"
 	"immich-go/internal/ml"
 	"immich-go/internal/storage"
 	"immich-go/internal/store"
 	"immich-go/internal/store/duckstore"
 	"immich-go/internal/vectordb"
+	"immich-go/internal/videometa"
 )
 
 type App struct {
@@ -201,6 +203,31 @@ func (a *App) handleExtractMetadata(ctx context.Context, _ string, data any) err
 		}
 	}
 
+	// Video containers: duration, dimensions, fps from the MP4 family
+	// parser (pure Go) or ffprobe when installed. The parser reports
+	// post-rotation dimensions already.
+	if asset.Type == domain.AssetVideo {
+		if info, err := videometa.ParseFile(asset.OriginalPath); err == nil && info != nil {
+			a.Log.Debug("video probed", "asset", id,
+				"durationMs", info.DurationMs, "dims", fmt.Sprint(info.Width, "x", info.Height),
+				"fps", info.FPS, "videoCodec", info.VideoCodec, "audioCodec", info.AudioCodec,
+				"rotation", info.RotationDeg)
+			if info.DurationMs > 0 {
+				duration := info.DurationMs
+				asset.Duration = &duration
+			}
+			if info.Width > 0 && info.Height > 0 {
+				w, h, haveDims = info.Width, info.Height, true
+			}
+			if info.FPS > 0 {
+				fps := info.FPS
+				exifRow.FPS = &fps
+			}
+		} else if err != nil && err != videometa.ErrNoProbe {
+			a.Log.Debug("video probe failed", "asset", id, "err", err)
+		}
+	}
+
 	if haveDims && w > 0 && h > 0 {
 		// Orientations 5-8 describe a rotated capture; report the upright
 		// dimensions the way sharp's rotate() pipeline would.
@@ -237,15 +264,52 @@ func (a *App) handleGenerateThumbnails(ctx context.Context, _ string, data any) 
 	if err != nil {
 		return err
 	}
-	if asset.Type != domain.AssetImage {
-		return nil // video transcoding is out of scope for this port
+	switch asset.Type {
+	case domain.AssetImage:
+		thumb, err := generateThumbnail(asset.OriginalPath, a.Storage, asset.OwnerID, asset.ID, "thumbnail")
+		if err != nil {
+			return err
+		}
+		preview, err := generateThumbnail(asset.OriginalPath, a.Storage, asset.OwnerID, asset.ID, "preview")
+		if err != nil {
+			return err
+		}
+		asset.ThumbnailPath = thumb
+		asset.PreviewPath = preview
+		return a.Store.Assets().Update(ctx, asset)
+	case domain.AssetVideo:
+		return a.generateVideoPoster(ctx, asset)
+	default:
+		return nil
 	}
+}
 
-	thumb, err := generateThumbnail(asset.OriginalPath, a.Storage, asset.OwnerID, asset.ID, "thumbnail")
+// generateVideoPoster extracts a poster frame with ffmpeg, derives the
+// preview and thumbnail renditions, and stores both. Without ffmpeg the
+// job completes without renditions — the thumbnail endpoint then reports
+// that no preview is available for the asset.
+func (a *App) generateVideoPoster(ctx context.Context, asset *domain.Asset) error {
+	if !media.HasFFmpeg() {
+		a.Log.Info("ffmpeg not installed; skipping video poster", "asset", asset.ID)
+		return nil
+	}
+	at := 0.0
+	if asset.Duration != nil && *asset.Duration > 2000 {
+		at = 1.0 // one second in, mirroring a stable opening frame
+	}
+	frame, err := media.ExtractFrame(asset.OriginalPath, at, media.PreviewMax)
+	if err != nil {
+		return fmt.Errorf("video poster: %w", err)
+	}
+	preview, err := a.Storage.WriteThumb(asset.OwnerID, asset.ID, "preview", frame)
 	if err != nil {
 		return err
 	}
-	preview, err := generateThumbnail(asset.OriginalPath, a.Storage, asset.OwnerID, asset.ID, "preview")
+	small, err := media.GenerateThumbFromBytes(frame, media.ThumbnailMax)
+	if err != nil {
+		return err
+	}
+	thumb, err := a.Storage.WriteThumb(asset.OwnerID, asset.ID, "thumbnail", small)
 	if err != nil {
 		return err
 	}

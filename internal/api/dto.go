@@ -115,6 +115,7 @@ type ExifResponse struct {
 	Country          string   `json:"country"`
 	Description      string   `json:"description"`
 	Rating           *int     `json:"rating"`
+	FPS              *float64 `json:"fps"`
 }
 
 type AssetResponse struct {
@@ -415,6 +416,7 @@ func (s *Server) assetResponse(a *domain.Asset, withExif bool) AssetResponse {
 			Country:          e.Country,
 			Description:      e.Description,
 			Rating:           e.Rating,
+			FPS:              e.FPS,
 		}
 		if e.FileSize > 0 {
 			size := e.FileSize

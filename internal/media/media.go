@@ -47,10 +47,24 @@ func GenerateThumb(path string, maxEdge int) ([]byte, error) {
 	if err != nil {
 		return os.ReadFile(path)
 	}
+	return resizeToJPEG(src, maxEdge)
+}
+
+// GenerateThumbFromBytes resizes an in-memory JPEG (e.g. an extracted
+// video frame) to the given bounding box.
+func GenerateThumbFromBytes(b []byte, maxEdge int) ([]byte, error) {
+	src, err := jpeg.Decode(bytes.NewReader(b))
+	if err != nil {
+		return b, nil // pass undecodable frames through untouched
+	}
+	return resizeToJPEG(src, maxEdge)
+}
+
+func resizeToJPEG(src image.Image, maxEdge int) ([]byte, error) {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w == 0 || h == 0 {
-		return nil, fmt.Errorf("invalid image %s", path)
+		return nil, fmt.Errorf("invalid image")
 	}
 
 	scale := float64(maxEdge) / float64(max(w, h))

@@ -153,8 +153,11 @@ func (s *Store) init() error {
 			state VARCHAR NOT NULL DEFAULT '',
 			country VARCHAR NOT NULL DEFAULT '',
 			description VARCHAR NOT NULL DEFAULT '',
-			rating INTEGER
+			rating INTEGER,
+			fps DOUBLE
 		)`,
+		// Databases created before the fps column existed.
+		`ALTER TABLE asset_exifs ADD COLUMN IF NOT EXISTS fps DOUBLE`,
 		`CREATE TABLE IF NOT EXISTS albums (
 			id VARCHAR PRIMARY KEY,
 			owner_id VARCHAR NOT NULL,

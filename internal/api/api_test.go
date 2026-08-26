@@ -18,6 +18,7 @@ import (
 	"immich-go/internal/app"
 	"immich-go/internal/config"
 	"immich-go/internal/exif/exiftest"
+	"immich-go/internal/videometa/videotest"
 )
 
 // fakeML mimics the immich-machine-learning service: /ping and /predict
@@ -401,6 +402,108 @@ func TestEndToEndFlow(t *testing.T) {
 		}
 	} else {
 		t.Fatal("metadataExtraction queue missing")
+	}
+}
+
+func TestVideoUploadMetadataAndPlayback(t *testing.T) {
+	h := newTestServer(t)
+
+	_, _ = doJSON(t, h, http.MethodPost, "/api/auth/admin-sign-up", "", map[string]any{
+		"name": "Admin", "email": "video@test.com", "password": "password123",
+	})
+	_, body := doJSON(t, h, http.MethodPost, "/api/auth/login", "", map[string]any{
+		"email": "video@test.com", "password": "password123",
+	})
+	token, _ := asMap(t, body)["accessToken"].(string)
+
+	// Synthetic MP4: 8s, 1280x720, 30fps, h264+aac.
+	mp4 := videotest.BuildMP4(videotest.Options{
+		Width: 1280, Height: 720, DurationMs: 8000, FPS: 30,
+	})
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("assetData", "clip.mp4")
+	fw.Write(mp4)
+	mw.WriteField("fileCreatedAt", "2026-07-01T09:00:00.000Z")
+	mw.WriteField("fileModifiedAt", "2026-07-01T09:00:00.000Z")
+	mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/assets", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("video upload: %d %s", rec.Code, rec.Body.String())
+	}
+	uploadResp := map[string]any{}
+	json.Unmarshal(rec.Body.Bytes(), &uploadResp)
+	assetID, _ := uploadResp["id"].(string)
+
+	// The metadata job extracts container info without ffmpeg.
+	deadline := time.Now().Add(15 * time.Second)
+	var detail map[string]any
+	for time.Now().Before(deadline) {
+		code, b := doJSON(t, h, http.MethodGet, "/api/assets/"+assetID, token, nil)
+		if code == 200 {
+			detail = asMap(t, b)
+			if detail["width"] != nil {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if detail == nil || detail["width"] == nil {
+		t.Fatalf("video metadata never populated: %v", detail)
+	}
+	if detail["type"] != "VIDEO" {
+		t.Fatalf("asset type: %v", detail["type"])
+	}
+	if w := detail["width"].(float64); w != 1280 {
+		t.Fatalf("video width: %v", detail["width"])
+	}
+	if d := detail["duration"].(float64); d != 8000 {
+		t.Fatalf("duration should come from the container: %v", detail["duration"])
+	}
+	exifInfo, _ := detail["exifInfo"].(map[string]any)
+	if exifInfo == nil {
+		t.Fatalf("missing exifInfo: %v", detail)
+	}
+	fps, _ := exifInfo["fps"].(float64)
+	if fps < 29.5 || fps > 31 {
+		t.Fatalf("fps not extracted: %v", exifInfo["fps"])
+	}
+
+	// Playback streams the original bytes.
+	playReq := httptest.NewRequest(http.MethodGet, "/api/assets/"+assetID+"/video/playback", nil)
+	playReq.Header.Set("Authorization", "Bearer "+token)
+	playRec := httptest.NewRecorder()
+	h.ServeHTTP(playRec, playReq)
+	if playRec.Code != 200 {
+		t.Fatalf("playback: %d", playRec.Code)
+	}
+	if !bytes.Equal(playRec.Body.Bytes(), mp4) {
+		t.Fatalf("playback bytes differ (%d vs %d)", playRec.Body.Len(), len(mp4))
+	}
+
+	// Statistics count the video.
+	_, body = doJSON(t, h, http.MethodGet, "/api/assets/statistics", token, nil)
+	stats := asMap(t, body)
+	if stats["videos"] != float64(1) || stats["total"] != float64(1) {
+		t.Fatalf("video statistics: %v", stats)
+	}
+
+	// Thumbnail: 200 with a poster when ffmpeg exists, otherwise a clean
+	// 404 — never the video bytes as an image.
+	thumbReq := httptest.NewRequest(http.MethodGet, "/api/assets/"+assetID+"/thumbnail", nil)
+	thumbReq.Header.Set("Authorization", "Bearer "+token)
+	thumbRec := httptest.NewRecorder()
+	h.ServeHTTP(thumbRec, thumbReq)
+	if thumbRec.Code == 200 {
+		if ct := thumbRec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+			t.Fatalf("poster content type: %s", ct)
+		}
+	} else if thumbRec.Code != http.StatusNotFound {
+		t.Fatalf("thumbnail should be 200 (ffmpeg) or 404, got %d", thumbRec.Code)
 	}
 }
 
