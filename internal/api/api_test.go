@@ -5,9 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/color"
-	"image/jpeg"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -20,6 +17,7 @@ import (
 
 	"immich-go/internal/app"
 	"immich-go/internal/config"
+	"immich-go/internal/exif/exiftest"
 )
 
 // fakeML mimics the immich-machine-learning service: /ping and /predict
@@ -44,19 +42,22 @@ func fakeML(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// exifTaken is the capture time stamped into every test upload.
+var exifTaken = time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+
 func testJPEG(t *testing.T, seed int) []byte {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
-	for y := 0; y < 64; y++ {
-		for x := 0; x < 64; x++ {
-			img.Set(x, y, color.RGBA{R: uint8((x * 4 + seed) % 256), G: uint8(y * 4), B: uint8(seed * 40), A: 255})
-		}
-	}
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
+	lat, lon := 31.2304, 121.4737
+	return exiftest.BuildJPEG(exiftest.Options{
+		Width: 64, Height: 64,
+		Make: "TestCam", Model: "X100", LensModel: "23mm f/2",
+		Description:      fmt.Sprintf("test gradient %d", seed),
+		Orientation:      1,
+		Rating:           3,
+		DateTimeOriginal: &exifTaken,
+		Latitude:         &lat,
+		Longitude:        &lon,
+	})
 }
 
 func newTestServer(t *testing.T) http.Handler {
@@ -237,6 +238,25 @@ func TestEndToEndFlow(t *testing.T) {
 		t.Fatalf("metadata extraction did not complete for 3 assets, got %d", len(assetIDs))
 	}
 	assetID := assetIDs[0]
+
+	// EXIF extracted by the metadata job surfaces in the asset detail.
+	_, detail := doJSON(t, h, http.MethodGet, "/api/assets/"+assetID, token, nil)
+	exifInfo, _ := asMap(t, detail)["exifInfo"].(map[string]any)
+	if exifInfo == nil {
+		t.Fatalf("asset detail missing exifInfo: %v", detail)
+	}
+	if exifInfo["make"] != "TestCam" || exifInfo["model"] != "X100" || exifInfo["lensModel"] != "23mm f/2" {
+		t.Fatalf("camera tags not extracted: %v", exifInfo)
+	}
+	if exifInfo["dateTimeOriginal"] != "2026-01-15T10:00:00.000Z" {
+		t.Fatalf("dateTimeOriginal not extracted: %v", exifInfo["dateTimeOriginal"])
+	}
+	if lat, _ := exifInfo["latitude"].(float64); lat < 31.229 || lat > 31.231 {
+		t.Fatalf("latitude not extracted: %v", exifInfo["latitude"])
+	}
+	if rating, _ := exifInfo["rating"].(float64); rating != 3 {
+		t.Fatalf("rating not extracted: %v", exifInfo["rating"])
+	}
 
 	// Thumbnail endpoint serves the generated JPEG.
 	thumbReq := httptest.NewRequest(http.MethodGet, "/api/assets/"+assetID+"/thumbnail", nil)

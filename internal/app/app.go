@@ -15,6 +15,7 @@ import (
 	"immich-go/internal/config"
 	"immich-go/internal/crypto"
 	"immich-go/internal/domain"
+	"immich-go/internal/exif"
 	"immich-go/internal/jobs"
 	"immich-go/internal/ml"
 	"immich-go/internal/storage"
@@ -158,20 +159,59 @@ func (a *App) handleExtractMetadata(ctx context.Context, _ string, data any) err
 	if fi, err := fileSizeOf(asset.OriginalPath); err == nil {
 		fileSize = fi
 	}
-	exif := asset.Exif
-	if exif == nil {
-		exif = &domain.AssetExif{}
+	exifRow := asset.Exif
+	if exifRow == nil {
+		exifRow = &domain.AssetExif{}
 	}
-	exif.FileSize = fileSize
+	exifRow.FileSize = fileSize
 
+	// Pixel dimensions from the bitstream, refined by EXIF when present.
+	w, h := 0, 0
+	haveDims := false
 	if asset.Type == domain.AssetImage {
-		if w, h, _, err := probeImage(asset.OriginalPath); err == nil {
-			ww, hh := w, h
-			asset.Width, asset.Height = &ww, &hh
-			exif.ExifWidth, exif.ExifHeight = &ww, &hh
+		if pw, ph, _, err := probeImage(asset.OriginalPath); err == nil && pw > 0 && ph > 0 {
+			w, h, haveDims = pw, ph, true
 		}
 	}
-	asset.Exif = exif
+
+	// Full EXIF extraction (camera, capture time, GPS, rating, ...).
+	meta, err := exif.ParseFile(asset.OriginalPath)
+	if err != nil {
+		a.Log.Debug("exif parse failed", "asset", id, "err", err)
+	}
+	if err == nil && meta != nil {
+		exifRow.Make = meta.Make
+		exifRow.Model = meta.Model
+		exifRow.LensModel = meta.LensModel
+		if meta.Description != "" {
+			exifRow.Description = meta.Description
+		}
+		exifRow.DateTimeOriginal = meta.DateTimeOriginal
+		exifRow.Rating = meta.Rating
+		exifRow.Latitude = meta.Latitude
+		exifRow.Longitude = meta.Longitude
+		if meta.Width > 0 {
+			w, haveDims = meta.Width, true
+		}
+		if meta.Height > 0 {
+			h, haveDims = meta.Height, true
+		}
+		if meta.DateTimeOriginal != nil {
+			asset.LocalDateTime = *meta.DateTimeOriginal
+		}
+	}
+
+	if haveDims && w > 0 && h > 0 {
+		// Orientations 5-8 describe a rotated capture; report the upright
+		// dimensions the way sharp's rotate() pipeline would.
+		if meta != nil && meta.Orientation >= 5 && meta.Orientation <= 8 {
+			w, h = h, w
+		}
+		ww, hh := w, h
+		asset.Width, asset.Height = &ww, &hh
+		exifRow.ExifWidth, exifRow.ExifHeight = &ww, &hh
+	}
+	asset.Exif = exifRow
 	if err := a.Store.Assets().Update(ctx, asset); err != nil {
 		return err
 	}

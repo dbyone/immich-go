@@ -72,6 +72,7 @@ internal/ml/            immich-machine-learning 客户端（wire 级兼容）★
 internal/api/           REST handlers（DTO 对齐 OpenAPI spec）
 internal/jobs/          进程内作业队列（19 个队列名与 /api/jobs 一致）
 internal/media/         缩略图生成（250/1440, JPEG q80）
+internal/exif/          纯 Go EXIF 解析（IFD0/ExifIFD/GPS：相机、拍摄时间、坐标、评分、方向）
 internal/storage/       磁盘布局（upload/thumbs/<userId>/<a>/<b>/...）
 internal/app/           装配 + 后台作业流水线（元数据→缩略图→CLIP→人脸→聚类/去重）
 docs/                   架构分析、ML 兼容、DuckDB 向量库文档
@@ -84,6 +85,7 @@ docs/                   架构分析、ML 兼容、DuckDB 向量库文档
 | immich-machine-learning（容器） | ✅ 直接对接（`/ping`、`/predict` multipart、多实例故障转移） |
 | 向量库 | ✅ 内嵌 DuckDB（smart_search/face_search/person 表、SQL 余弦、DBSCAN 人物聚类、近重复检测），无需 PostgreSQL/Redis |
 | 实体持久化 | ✅ 用户/会话/API Key/资产(含 EXIF)/相册 均持久化于 `<media>/immich.duckdb`，重启不丢（已实测重启恢复） |
+| EXIF 元数据 | ✅ 纯 Go 解析 JPEG/TIFF（相机/镜头、原始拍摄时间、GPS 坐标、描述、评分、方向修正宽高），无 exiftool 依赖 |
 | Immich API（v3.1.0 子集） | ✅ auth/assets/albums/timeline/search/jobs/trash/sessions/api-keys/users/server/people/duplicates |
 | 官方 Web / 移动端 | ⚠️ 核心上传-浏览-相册-搜索链路可用；未覆盖功能（伙伴、共享链接、sync 等）会缺失 |
 

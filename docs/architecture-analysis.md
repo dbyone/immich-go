@@ -155,7 +155,7 @@ JSON 对象，键为 task 名 + 图像尺寸：
 ## 5. 尚未移植 / 后续路线
 
 1. ~~实体元数据 SQL 持久化~~ ✅ 已完成：`internal/store/duckstore` 落库 DuckDB，重启实测恢复。
-2. **EXIF 完整解析**（exiftool 等价物）：当前仅宽高/文件大小；补 EXIF/TIFF 解析后回填 `asset_exifs`。
+2. ~~EXIF 完整解析~~ ✅ 已完成：`internal/exif` 纯 Go 解析 JPEG(APP1)/TIFF 的 IFD0 + ExifIFD + GPS（双端序、边界安全），回填拍摄时间/相机/镜头/GPS/描述/评分，方向 5-8 自动修正宽高；无 exiftool 依赖。视频流元数据（fps/codec，来自 ffprobe）仍未覆盖。
 3. **视频转码 / HLS**（ffmpeg）、**thumbhash**、**存储模板迁移**（Handlebars 改名进 library/）。
 4. 人脸聚类的 person 命名/合并/拆分 API、OCR 结果入库。
 5. **共享链接、伙伴共享、同步协议 `/sync/stream`、记忆/标签/活动/通知/库扫描**等大块功能。
