@@ -104,4 +104,7 @@ go vet ./...
 
 ## License
 
-参考上游 Immich（AGPL-3.0）生态，本项目按 AGPL-3.0 发布。
+[MIT](LICENSE)
+
+本项目是基于对上游 Immich（AGPL-3.0）公开 API 行为的独立分析编写的兼容实现，
+未复制其源代码；本仓库自身按 MIT 授权发布。
