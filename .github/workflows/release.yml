@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ext: ""
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+        run: go build -trimpath -ldflags="-s -w" -o "immich-go_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }}" ./cmd/immich-go
+
+      - name: Package (unix)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          VERSION="${{ github.ref_name }}"
+          NAME="immich-go_${VERSION}_linux_amd64"
+          mkdir -p "$NAME"
+          mv "immich-go_linux_amd64" "$NAME/immich-go"
+          cp LICENSE README.md "$NAME/"
+          tar -czf "$NAME.tar.gz" "$NAME"
+          sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+
+      - name: Package (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $name = "immich-go_${version}_windows_amd64"
+          New-Item -ItemType Directory -Force $name | Out-Null
+          Move-Item "immich-go_windows_amd64.exe" "$name/immich-go.exe"
+          Copy-Item LICENSE, README.md $name/
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          Get-FileHash "$name.zip" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $name.zip" } | Out-File "$name.zip.sha256" -Encoding ascii
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            immich-go_*_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz
+            immich-go_*_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz.sha256
+            immich-go_*_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+            immich-go_*_${{ matrix.goos }}_${{ matrix.goarch }}.zip.sha256
