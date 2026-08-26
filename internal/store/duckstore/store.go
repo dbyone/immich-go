@@ -16,8 +16,17 @@ import (
 
 // Store implements store.Store on top of a DuckDB database. It can share
 // the *sql.DB with the vector store (New) or own a dedicated file (Open).
+//
+// db is the single-writer connection pool every mutation goes through.
+// ro is a (possibly identical) pool serving reads: for file-backed
+// databases it may hold several concurrent snapshot readers (DuckDB
+// connections share one database instance per path), so logins and
+// listings stop queueing behind long write transactions. For :memory:
+// databases ro must be the same pool — separate opens would create
+// separate empty databases.
 type Store struct {
 	db   *sql.DB
+	ro   *sql.DB
 	owns bool
 }
 
@@ -49,7 +58,13 @@ func Open(path string) (*Store, error) {
 
 // New attaches the entity store to an existing database connection.
 func New(db *sql.DB) (*Store, error) {
-	s := &Store{db: db}
+	return NewWithReadPool(db, db)
+}
+
+// NewWithReadPool attaches with a separate read pool (file-backed
+// databases only; pass db itself for :memory:).
+func NewWithReadPool(db, ro *sql.DB) (*Store, error) {
+	s := &Store{db: db, ro: ro}
 	if err := s.init(); err != nil {
 		return nil, err
 	}

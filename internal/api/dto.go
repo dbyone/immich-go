@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"time"
 
 	"immich-go/internal/domain"
@@ -362,7 +363,7 @@ type ServerAboutResponse struct {
 }
 
 // assetResponse builds the wire representation of an asset.
-func (s *Server) assetResponse(a *domain.Asset, withExif bool) AssetResponse {
+func (s *Server) assetResponse(ctx context.Context, a *domain.Asset, withExif bool) AssetResponse {
 	resp := AssetResponse{
 		ID:               a.ID,
 		Checksum:         a.ChecksumB64,
@@ -423,7 +424,7 @@ func (s *Server) assetResponse(a *domain.Asset, withExif bool) AssetResponse {
 			resp.ExifInfo.FileSizeInByte = &size
 		}
 	}
-	if u, err := s.app.Store.Users().Get(defaultCtx, a.OwnerID); err == nil {
+	if u, err := s.app.Store.Users().Get(ctx, a.OwnerID); err == nil {
 		resp.Owner = userResponsePtr(u)
 	}
 	return resp

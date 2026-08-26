@@ -11,7 +11,7 @@ var ErrPersonNotFound = errors.New("person not found")
 
 // GetPerson loads one person (any owner; authorization is the caller's job).
 func (s *Store) GetPerson(ctx context.Context, id string) (*Person, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.ro.QueryRowContext(ctx, `
 		SELECT id, owner_id, name, is_hidden, is_favorite, face_count,
 			COALESCE(thumbnail_asset_id, ''), created_at, updated_at,
 			COALESCE(birth_date, ''), COALESCE(color, '')
@@ -165,7 +165,7 @@ func (s *Store) ReassignFaces(ctx context.Context, fromPerson string, entries []
 
 // PersonStats reports how many distinct assets a person appears in.
 func (s *Store) PersonStats(ctx context.Context, personID string) (assets int, err error) {
-	err = s.db.QueryRowContext(ctx, `
+	err = s.ro.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT asset_id) FROM face_search WHERE person_id = ?`,
 		personID).Scan(&assets)
 	return
@@ -184,7 +184,7 @@ func (s *Store) PersonFace(ctx context.Context, personID string) (*FaceRef, erro
 	if err != nil {
 		return nil, err
 	}
-	row := s.db.QueryRowContext(ctx, `
+	row := s.ro.QueryRowContext(ctx, `
 		SELECT asset_id, face_idx, x1, y1, x2, y2 FROM face_search
 		WHERE person_id = ?
 		ORDER BY CASE WHEN asset_id = ? THEN 0 ELSE 1 END, asset_id, face_idx

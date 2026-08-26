@@ -55,8 +55,9 @@ type FaceRow struct {
 // a shared database (Attach) the store does not own — and never closes —
 // the connection; entity metadata lives in the same file.
 type Store struct {
-	db   *sql.DB
-	dim  int
+	db  *sql.DB // single-writer pool (all mutations and transactions)
+	ro  *sql.DB // read pool (may equal db; file-backed DBs get real parallelism)
+	dim int
 	owns bool
 
 	mu          sync.Mutex // guards clustering/dedup recomputation
@@ -71,7 +72,7 @@ func Open(path string, dim int) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s, err := Attach(db, dim)
+	s, err := AttachReadWrite(db, db, dim)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -83,10 +84,16 @@ func Open(path string, dim int) (*Store, error) {
 // Attach initializes the vector tables on a shared *sql.DB (single
 // connection expected). The caller stays responsible for closing it.
 func Attach(db *sql.DB, dim int) (*Store, error) {
+	return AttachReadWrite(db, db, dim)
+}
+
+// AttachReadWrite is Attach with a dedicated read pool (file-backed
+// databases only; pass db for :memory:).
+func AttachReadWrite(db, ro *sql.DB, dim int) (*Store, error) {
 	if dim <= 0 {
 		dim = 512
 	}
-	s := &Store{db: db, dim: dim}
+	s := &Store{db: db, ro: ro, dim: dim}
 	if err := s.init(); err != nil {
 		return nil, err
 	}
@@ -238,7 +245,7 @@ func (s *Store) SearchSmart(ctx context.Context, ownerID string, query []float32
 		limit = 250
 	}
 	if s.hasCosineFn {
-		rows, err := s.db.QueryContext(ctx, `
+		rows, err := s.ro.QueryContext(ctx, `
 			SELECT asset_id, array_cosine_similarity(embedding, TRY_CAST(? AS FLOAT[`+fmt.Sprint(s.dim)+`])) AS score
 			FROM smart_search
 			WHERE owner_id = ?
@@ -281,7 +288,7 @@ func (s *Store) SearchSmart(ctx context.Context, ownerID string, query []float32
 }
 
 func (s *Store) loadSmart(ctx context.Context, ownerID string) (map[string][]float32, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.ro.QueryContext(ctx,
 		`SELECT asset_id, CAST(embedding AS VARCHAR) FROM smart_search WHERE owner_id = ?`, ownerID)
 	if err != nil {
 		return nil, err
@@ -366,7 +373,7 @@ func (s *Store) DeleteFaces(ctx context.Context, assetID string) error {
 }
 
 func (s *Store) LoadFaces(ctx context.Context, ownerID string) ([]FaceRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.ro.QueryContext(ctx, `
 		SELECT asset_id, face_idx, COALESCE(person_id, ''), x1, y1, x2, y2, CAST(embedding AS VARCHAR)
 		FROM face_search WHERE owner_id = ? ORDER BY asset_id, face_idx`, ownerID)
 	if err != nil {
@@ -393,7 +400,7 @@ func (s *Store) LoadFaces(ctx context.Context, ownerID string) ([]FaceRow, error
 
 // ListPersons returns the owner's people ordered by face count.
 func (s *Store) ListPersons(ctx context.Context, ownerID string) ([]Person, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.ro.QueryContext(ctx, `
 		SELECT id, name, is_hidden, is_favorite, face_count, COALESCE(thumbnail_asset_id, ''),
 			created_at, updated_at, COALESCE(birth_date, ''), COALESCE(color, '')
 		FROM person WHERE owner_id = ?
@@ -418,7 +425,7 @@ func (s *Store) ListPersons(ctx context.Context, ownerID string) ([]Person, erro
 
 // Counts reports table sizes for observability.
 func (s *Store) Counts(ctx context.Context) (smart, faces, persons int64, err error) {
-	err = s.db.QueryRowContext(ctx, `
+	err = s.ro.QueryRowContext(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM smart_search),
 			(SELECT COUNT(*) FROM face_search),

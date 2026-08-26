@@ -15,6 +15,7 @@ import (
 	"immich-go/internal/domain"
 	"immich-go/internal/jobs"
 	"immich-go/internal/storage"
+	"immich-go/internal/store"
 )
 
 type uploadForm struct {
@@ -247,7 +248,7 @@ func (s *Server) getAsset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.assetResponse(asset, true))
+	writeJSON(w, http.StatusOK, s.assetResponse(r.Context(), asset, true))
 }
 
 // canSeeAsset reports whether the caller may access the asset: the owner
@@ -286,34 +287,37 @@ func (s *Server) updateAsset(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
-	asset, err := s.app.Store.Assets().Get(r.Context(), chiURLParam(r, "id"))
-	if err != nil || asset.OwnerID != a.User.ID {
-		writeError(w, http.StatusNotFound, "Not found")
-		return
-	}
 	var req updateAssetRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.IsFavorite != nil {
-		asset.IsFavorite = *req.IsFavorite
-	}
 	if req.Visibility != nil {
 		switch *req.Visibility {
 		case domain.VisibilityArchive, domain.VisibilityTimeline, domain.VisibilityHidden, domain.VisibilityLocked:
-			asset.Visibility = *req.Visibility
 		default:
 			writeError(w, http.StatusBadRequest, "invalid visibility")
 			return
 		}
 	}
-	asset.UpdatedAt = time.Now().UTC()
-	if err := s.app.Store.Assets().Update(r.Context(), asset); err != nil {
+	asset, err := s.app.UpdateAsset(r.Context(), chiURLParam(r, "id"), func(asset *domain.Asset) error {
+		if asset.OwnerID != a.User.ID {
+			return store.ErrForbidden
+		}
+		if req.IsFavorite != nil {
+			asset.IsFavorite = *req.IsFavorite
+		}
+		if req.Visibility != nil {
+			asset.Visibility = *req.Visibility
+		}
+		asset.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+	if err != nil {
 		s.storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.assetResponse(asset, true))
+	writeJSON(w, http.StatusOK, s.assetResponse(r.Context(), asset, true))
 }
 
 func (s *Server) assetStatistics(w http.ResponseWriter, r *http.Request) {
@@ -436,25 +440,32 @@ func (s *Server) bulkDeleteAssets(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	for _, id := range req.IDs {
-		asset, err := s.app.Store.Assets().Get(r.Context(), id)
-		if err != nil || asset.OwnerID != a.User.ID {
-			continue
-		}
 		if req.Force {
+			_, _ = s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
+				if asset.OwnerID != a.User.ID {
+					return store.ErrForbidden
+				}
+				return nil
+			})
 			_ = s.app.Jobs.Queue(jobs.JobAssetDelete, app.AssetJobData(id))
 		} else {
-			asset.DeletedAt = &now
-			asset.UpdatedAt = now
-			_ = s.app.Store.Assets().Update(r.Context(), asset)
+			_, _ = s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
+				if asset.OwnerID != a.User.ID {
+					return store.ErrForbidden
+				}
+				asset.DeletedAt = &now
+				asset.UpdatedAt = now
+				return nil
+			})
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 type bulkUpdateRequest struct {
-	IDs         []string `json:"ids"`
-	IsFavorite  *bool    `json:"isFavorite"`
-	Visibility  *string  `json:"visibility"`
+	IDs        []string `json:"ids"`
+	IsFavorite *bool    `json:"isFavorite"`
+	Visibility *string  `json:"visibility"`
 }
 
 func (s *Server) bulkUpdateAssets(w http.ResponseWriter, r *http.Request) {
@@ -467,26 +478,28 @@ func (s *Server) bulkUpdateAssets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	validVisibility := req.Visibility == nil || *req.Visibility == domain.VisibilityArchive ||
+		*req.Visibility == domain.VisibilityTimeline || *req.Visibility == domain.VisibilityHidden ||
+		*req.Visibility == domain.VisibilityLocked
+	if !validVisibility {
+		writeError(w, http.StatusBadRequest, "invalid visibility")
+		return
+	}
 	now := time.Now().UTC()
 	for _, id := range req.IDs {
-		asset, err := s.app.Store.Assets().Get(r.Context(), id)
-		if err != nil || asset.OwnerID != a.User.ID {
-			continue
-		}
-		if req.IsFavorite != nil {
-			asset.IsFavorite = *req.IsFavorite
-		}
-		if req.Visibility != nil {
-			switch *req.Visibility {
-			case domain.VisibilityArchive, domain.VisibilityTimeline, domain.VisibilityHidden, domain.VisibilityLocked:
-				asset.Visibility = *req.Visibility
-			default:
-				writeError(w, http.StatusBadRequest, "invalid visibility")
-				return
+		_, _ = s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
+			if asset.OwnerID != a.User.ID {
+				return store.ErrForbidden
 			}
-		}
-		asset.UpdatedAt = now
-		_ = s.app.Store.Assets().Update(r.Context(), asset)
+			if req.IsFavorite != nil {
+				asset.IsFavorite = *req.IsFavorite
+			}
+			if req.Visibility != nil {
+				asset.Visibility = *req.Visibility
+			}
+			asset.UpdatedAt = now
+			return nil
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

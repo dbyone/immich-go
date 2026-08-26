@@ -214,7 +214,7 @@ func (s *Store) DetectDuplicates(ctx context.Context, ownerID string, maxDistanc
 	var pairs []pair
 
 	if s.hasCosineFn {
-		rows, err := s.db.QueryContext(ctx, `
+		rows, err := s.ro.QueryContext(ctx, `
 			SELECT a.asset_id, b.asset_id
 			FROM smart_search a
 			JOIN smart_search b

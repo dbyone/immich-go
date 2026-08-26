@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"immich-go/internal/domain"
+	"immich-go/internal/store"
 )
 
 // ---- duplicates resolution ----
@@ -23,9 +24,9 @@ func (s *Server) resolveDuplicates(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Groups []struct {
-			DuplicateID    string   `json:"duplicateId"`
-			KeepAssetIDs   []string `json:"keepAssetIds"`
-			TrashAssetIDs  []string `json:"trashAssetIds"`
+			DuplicateID   string   `json:"duplicateId"`
+			KeepAssetIDs  []string `json:"keepAssetIds"`
+			TrashAssetIDs []string `json:"trashAssetIds"`
 		} `json:"groups"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -41,23 +42,23 @@ func (s *Server) resolveDuplicates(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, id := range g.TrashAssetIDs {
 			res := BulkIDResponse{ID: id, Success: true}
-			asset, err := s.app.Store.Assets().Get(r.Context(), id)
-			if err != nil || asset.OwnerID != a.User.ID {
+			if keep[id] {
+				// A kept asset must not be trashed; the overlap is an
+				// error, not a silent no-op.
 				res.Success = false
-				res.Error = "not_found"
+				res.Error = "duplicate"
 			} else {
-				if keep[id] {
-					// A kept asset must not be trashed; the overlap is an
-					// error, not a silent no-op.
-					res.Success = false
-					res.Error = "duplicate"
-				} else {
+				_, err := s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
+					if asset.OwnerID != a.User.ID {
+						return store.ErrForbidden
+					}
 					asset.DeletedAt = &now
 					asset.UpdatedAt = now
-					if err := s.app.Store.Assets().Update(r.Context(), asset); err != nil {
-						res.Success = false
-						res.Error = "unknown"
-					}
+					return nil
+				})
+				if err != nil {
+					res.Success = false
+					res.Error = "not_found"
 				}
 			}
 			results = append(results, res)
@@ -66,9 +67,11 @@ func (s *Server) resolveDuplicates(w http.ResponseWriter, r *http.Request) {
 		assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 		for _, asset := range assets {
 			if asset.DuplicateID != nil && *asset.DuplicateID == g.DuplicateID {
-				asset.DuplicateID = nil
-				asset.UpdatedAt = now
-				_ = s.app.Store.Assets().Update(r.Context(), asset)
+				_, _ = s.app.UpdateAsset(r.Context(), asset.ID, func(fresh *domain.Asset) error {
+					fresh.DuplicateID = nil
+					fresh.UpdatedAt = now
+					return nil
+				})
 			}
 		}
 	}
@@ -109,9 +112,11 @@ func (s *Server) deleteDuplicateGroups(w http.ResponseWriter, r *http.Request, o
 	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), ownerID)
 	for _, asset := range assets {
 		if asset.DuplicateID != nil && drop[*asset.DuplicateID] {
-			asset.DuplicateID = nil
-			asset.UpdatedAt = now
-			_ = s.app.Store.Assets().Update(r.Context(), asset)
+			_, _ = s.app.UpdateAsset(r.Context(), asset.ID, func(fresh *domain.Asset) error {
+				fresh.DuplicateID = nil
+				fresh.UpdatedAt = now
+				return nil
+			})
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -303,7 +308,7 @@ func (s *Server) folderView(w http.ResponseWriter, r *http.Request) {
 	out := []AssetResponse{}
 	for _, asset := range assets {
 		if asset.DeletedAt == nil && strings.HasPrefix(filepath.ToSlash(asset.OriginalPath), prefix) {
-			out = append(out, s.assetResponse(asset, false))
+			out = append(out, s.assetResponse(r.Context(), asset, false))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -338,4 +343,3 @@ func (s *Server) folderUniquePaths(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
-

@@ -75,6 +75,11 @@ type Config struct {
 	// (IMMICH_UPLOAD_LIMIT_MB); 0 disables the cap.
 	UploadLimitMB int
 
+	// DuckDBReaders sizes the read connection pool for file-backed
+	// databases (IMMICH_DUCKDB_READERS); :memory: always shares the
+	// single writer pool.
+	DuckDBReaders int
+
 	// Debounce window batching clustering runs after face detection.
 	ClusterDebounce time.Duration
 
@@ -129,6 +134,7 @@ func Load() *Config {
 		ClusterDebounce: time.Duration(envInt("IMMICH_CLUSTER_DEBOUNCE_MS", 5000)) * time.Millisecond,
 		Store:           strings.ToLower(env("IMMICH_STORE", "duckdb")),
 		UploadLimitMB:   envInt("IMMICH_UPLOAD_LIMIT_MB", 8192),
+		DuckDBReaders:   envInt("IMMICH_DUCKDB_READERS", 4),
 	}
 	if hours := envInt("IMMICH_SESSION_TTL_HOURS", 9600); hours > 0 {
 		c.SessionTTL = time.Duration(hours) * time.Hour

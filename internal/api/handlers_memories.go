@@ -44,7 +44,7 @@ func (s *Server) memoryResponse(r *http.Request, m *domain.Memory) MemoryRespons
 	}
 	for _, id := range m.AssetIDs {
 		if asset, err := s.app.Store.Assets().Get(r.Context(), id); err == nil && asset.OwnerID == m.OwnerID {
-			resp.Assets = append(resp.Assets, s.assetResponse(asset, false))
+			resp.Assets = append(resp.Assets, s.assetResponse(r.Context(), asset, false))
 		}
 	}
 	return resp

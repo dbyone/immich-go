@@ -156,8 +156,8 @@ func (s *assetStore) Delete(ctx context.Context, id string) error {
 	})
 }
 
-func (s *assetStore) loadExif(ctx context.Context, a *domain.Asset) {
-	row := s.db.QueryRowContext(ctx, `
+func (s *assetStore) loadExif(ctx context.Context, a *domain.Asset) error {
+	row := s.ro.QueryRowContext(ctx, `
 		SELECT make, model, lens_model, file_size, exif_width, exif_height,
 			date_time_original, latitude, longitude, city, state, country, description, rating, fps
 		FROM asset_exifs WHERE asset_id = ?`, a.ID)
@@ -168,8 +168,11 @@ func (s *assetStore) loadExif(ctx context.Context, a *domain.Asset) {
 	var fps sql.NullFloat64
 	err := row.Scan(&e.Make, &e.Model, &e.LensModel, &fileSize, &exifW, &exifH,
 		&dateTime, &lat, &lon, &e.City, &e.State, &e.Country, &e.Description, &rating, &fps)
+	if err == sql.ErrNoRows {
+		return nil // asset without EXIF
+	}
 	if err != nil {
-		return // no exif row
+		return err
 	}
 	if fileSize.Valid {
 		v := fileSize.Int64
@@ -204,10 +207,88 @@ func (s *assetStore) loadExif(ctx context.Context, a *domain.Asset) {
 		e.FPS = &v
 	}
 	a.Exif = &e
+	return nil
+}
+
+// loadExifs hydrates EXIF rows for many assets in one query per chunk —
+// the list paths used to issue one query per asset (N+1).
+func (s *assetStore) loadExifs(ctx context.Context, assets []*domain.Asset) error {
+	const chunk = 500
+	byID := make(map[string]*domain.Asset, len(assets))
+	for i := 0; i < len(assets); i += chunk {
+		end := min(i+chunk, len(assets))
+		part := assets[i:end]
+		marks := make([]string, 0, len(part))
+		args := make([]any, 0, len(part))
+		for _, a := range part {
+			marks = append(marks, "?")
+			args = append(args, a.ID)
+			byID[a.ID] = a
+		}
+		rows, err := s.ro.QueryContext(ctx,
+			`SELECT asset_id, make, model, lens_model, file_size, exif_width, exif_height,
+				date_time_original, latitude, longitude, city, state, country, description, rating, fps
+			FROM asset_exifs WHERE asset_id IN (`+strings.Join(marks, ",")+`)`, args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			var e domain.AssetExif
+			var fileSize, exifW, exifH, rating sql.NullInt64
+			var dateTime sql.NullTime
+			var lat, lon, fps sql.NullFloat64
+			if err := rows.Scan(&id, &e.Make, &e.Model, &e.LensModel, &fileSize, &exifW, &exifH,
+				&dateTime, &lat, &lon, &e.City, &e.State, &e.Country, &e.Description, &rating, &fps); err != nil {
+				rows.Close()
+				return err
+			}
+			if fileSize.Valid {
+				e.FileSize = fileSize.Int64
+			}
+			if exifW.Valid {
+				v := int(exifW.Int64)
+				e.ExifWidth = &v
+			}
+			if exifH.Valid {
+				v := int(exifH.Int64)
+				e.ExifHeight = &v
+			}
+			if dateTime.Valid {
+				t := dateTime.Time
+				e.DateTimeOriginal = &t
+			}
+			if lat.Valid {
+				v := lat.Float64
+				e.Latitude = &v
+			}
+			if lon.Valid {
+				v := lon.Float64
+				e.Longitude = &v
+			}
+			if rating.Valid {
+				v := int(rating.Int64)
+				e.Rating = &v
+			}
+			if fps.Valid {
+				v := fps.Float64
+				e.FPS = &v
+			}
+			if a, ok := byID[id]; ok {
+				a.Exif = &e
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	return nil
 }
 
 func (s *assetStore) Get(ctx context.Context, id string) (*domain.Asset, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+assetColumns+` FROM assets WHERE id = ?`, id)
+	row := s.ro.QueryRowContext(ctx, `SELECT `+assetColumns+` FROM assets WHERE id = ?`, id)
 	a, err := scanAsset(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
@@ -215,12 +296,14 @@ func (s *assetStore) Get(ctx context.Context, id string) (*domain.Asset, error) 
 	if err != nil {
 		return nil, err
 	}
-	s.loadExif(ctx, a)
+	if err := s.loadExif(ctx, a); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
 func (s *assetStore) GetByChecksum(ctx context.Context, ownerID string, checksum []byte) (*domain.Asset, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.ro.QueryRowContext(ctx, `
 		SELECT `+assetColumns+` FROM assets
 		WHERE owner_id = ? AND checksum = ? AND deleted_at IS NULL
 		LIMIT 1`, ownerID, checksum)
@@ -231,12 +314,14 @@ func (s *assetStore) GetByChecksum(ctx context.Context, ownerID string, checksum
 	if err != nil {
 		return nil, err
 	}
-	s.loadExif(ctx, a)
+	if err := s.loadExif(ctx, a); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
 func (s *assetStore) GetByChecksumAny(ctx context.Context, ownerID string, checksum []byte) (*domain.Asset, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.ro.QueryRowContext(ctx, `
 		SELECT `+assetColumns+` FROM assets
 		WHERE owner_id = ? AND checksum = ?
 		LIMIT 1`, ownerID, checksum)
@@ -247,13 +332,15 @@ func (s *assetStore) GetByChecksumAny(ctx context.Context, ownerID string, check
 	if err != nil {
 		return nil, err
 	}
-	s.loadExif(ctx, a)
+	if err := s.loadExif(ctx, a); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
 func (s *assetStore) listWhere(ctx context.Context, where string, args ...any) ([]*domain.Asset, error) {
 	query := `SELECT ` + assetColumns + ` FROM assets` + where + ` ORDER BY created_at, id`
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.ro.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -269,8 +356,8 @@ func (s *assetStore) listWhere(ctx context.Context, where string, args ...any) (
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, a := range out {
-		s.loadExif(ctx, a)
+	if err := s.loadExifs(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -424,7 +511,7 @@ func (s *albumStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *albumStore) Get(ctx context.Context, id string) (*domain.Album, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+albumColumns+` FROM albums WHERE id = ?`, id)
+	row := s.ro.QueryRowContext(ctx, `SELECT `+albumColumns+` FROM albums WHERE id = ?`, id)
 	al, err := scanAlbum(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
@@ -439,45 +526,81 @@ func (s *albumStore) Get(ctx context.Context, id string) (*domain.Album, error) 
 }
 
 func (s *albumStore) loadMembers(ctx context.Context, al *domain.Album) error {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT asset_id FROM album_assets WHERE album_id = ? ORDER BY position, asset_id`, al.ID)
+	return s.loadMembersBatch(ctx, []*domain.Album{al})
+}
+
+// loadMembersBatch hydrates assets and users of many albums in two
+// queries — the list paths used to run two per album (N+1).
+func (s *albumStore) loadMembersBatch(ctx context.Context, albums []*domain.Album) error {
+	if len(albums) == 0 {
+		return nil
+	}
+	byID := make(map[string]*domain.Album, len(albums))
+	marks := make([]string, 0, len(albums))
+	args := make([]any, 0, len(albums))
+	for _, al := range albums {
+		byID[al.ID] = al
+		marks = append(marks, "?")
+		args = append(args, al.ID)
+	}
+	in := strings.Join(marks, ",")
+
+	assetRows, err := s.ro.QueryContext(ctx, `
+		SELECT album_id, asset_id FROM album_assets
+		WHERE album_id IN (`+in+`) ORDER BY album_id, position, asset_id`, args...)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+	for assetRows.Next() {
+		var albumID, assetID string
+		if err := assetRows.Scan(&albumID, &assetID); err != nil {
+			assetRows.Close()
 			return err
 		}
-		al.AssetIDs = append(al.AssetIDs, id)
+		if al, ok := byID[albumID]; ok {
+			al.AssetIDs = append(al.AssetIDs, assetID)
+		}
 	}
-	if err := rows.Err(); err != nil {
+	err = assetRows.Err()
+	assetRows.Close()
+	if err != nil {
 		return err
 	}
 
-	userRows, err := s.db.QueryContext(ctx,
-		`SELECT user_id, role FROM album_users WHERE album_id = ? ORDER BY user_id`, al.ID)
+	userRows, err := s.ro.QueryContext(ctx, `
+		SELECT album_id, user_id, role FROM album_users
+		WHERE album_id IN (`+in+`) ORDER BY album_id, user_id`, args...)
 	if err != nil {
 		return err
 	}
-	defer userRows.Close()
 	for userRows.Next() {
+		var albumID string
 		var u domain.AlbumUser
-		if err := userRows.Scan(&u.UserID, &u.Role); err != nil {
+		if err := userRows.Scan(&albumID, &u.UserID, &u.Role); err != nil {
+			userRows.Close()
 			return err
 		}
-		al.Users = append(al.Users, u)
+		if al, ok := byID[albumID]; ok {
+			al.Users = append(al.Users, u)
+		}
 	}
-	al.AssetIndex = make(map[string]bool, len(al.AssetIDs))
-	for _, id := range al.AssetIDs {
-		al.AssetIndex[id] = true
+	err = userRows.Err()
+	userRows.Close()
+	if err != nil {
+		return err
 	}
-	return userRows.Err()
+
+	for _, al := range albums {
+		al.AssetIndex = make(map[string]bool, len(al.AssetIDs))
+		for _, id := range al.AssetIDs {
+			al.AssetIndex[id] = true
+		}
+	}
+	return nil
 }
 
 func (s *albumStore) listWhere(ctx context.Context, where string, args ...any) ([]*domain.Album, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.ro.QueryContext(ctx,
 		`SELECT `+albumColumns+` FROM albums`+where+` ORDER BY created_at, id`, args...)
 	if err != nil {
 		return nil, err
@@ -494,10 +617,8 @@ func (s *albumStore) listWhere(ctx context.Context, where string, args ...any) (
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, al := range out {
-		if err := s.loadMembers(ctx, al); err != nil {
-			return nil, err
-		}
+	if err := s.loadMembersBatch(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

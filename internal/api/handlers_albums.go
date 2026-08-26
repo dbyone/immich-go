@@ -52,7 +52,7 @@ func (s *Server) albumResponse(r *http.Request, al *domain.Album, withAssets boo
 		}
 		resp.EndDate = isoTimePtr(&asset.FileCreatedAt)
 		if withAssets {
-			resp.Assets = append(resp.Assets, s.assetResponse(asset, false))
+			resp.Assets = append(resp.Assets, s.assetResponse(r.Context(), asset, false))
 		}
 	}
 	if resp.EndDate != nil {

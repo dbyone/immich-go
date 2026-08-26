@@ -39,9 +39,10 @@ type App struct {
 	// pgvector layer: CLIP embeddings, face embeddings, people clusters.
 	Vectors *vectordb.Store
 
-	// db is the shared DuckDB connection for entities and vectors; App
-	// owns it and closes it on Close.
+	// db is the shared DuckDB writer pool for entities and vectors; App
+	// owns it (and ro, when separate) and closes them on Close.
 	db *sql.DB
+	ro *sql.DB
 
 	// Debounced re-computation: batches of face/smart-search jobs collapse
 	// into a single clustering / dedup run.
@@ -49,6 +50,11 @@ type App struct {
 	clusterTimer *time.Timer
 	dedupMu      sync.Mutex
 	dedupTimer   *time.Timer
+
+	// assetMu serializes read-modify-write cycles on asset rows (jobs and
+	// handlers alike) — DuckDB has no row locking and a naive
+	// Get→mutate→Update pair can interleave with another writer.
+	assetMu sync.Mutex
 }
 
 // New wires the application. A nil entity store selects the DuckDB
@@ -68,18 +74,31 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 	}
 
 	// One DuckDB database holds everything: entity metadata and vectors.
+	// File-backed databases get a second pool of read-only snapshot
+	// connections so listings and auth stop queueing behind writes;
+	// :memory: must share the single pool (separate opens = separate DBs).
 	db, err := duckstore.OpenDB(cfg.DuckDBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb %s: %w", cfg.DuckDBPath, err)
 	}
-	vectors, err := vectordb.Attach(db, cfg.VectorDim)
+	ro := db
+	if cfg.DuckDBPath != ":memory:" && cfg.DuckDBReaders > 0 {
+		if ro, err = duckstore.OpenDB(cfg.DuckDBPath); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("open duckdb read pool: %w", err)
+		}
+		ro.SetMaxOpenConns(cfg.DuckDBReaders)
+	}
+	vectors, err := vectordb.AttachReadWrite(db, ro, cfg.VectorDim)
 	if err != nil {
+		ro.Close()
 		db.Close()
 		return nil, fmt.Errorf("init vector store: %w", err)
 	}
 	if st == nil {
-		st, err = duckstore.New(db)
+		st, err = duckstore.NewWithReadPool(db, ro)
 		if err != nil {
+			ro.Close()
 			db.Close()
 			return nil, fmt.Errorf("init entity store: %w", err)
 		}
@@ -97,6 +116,7 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		Log:     log,
 		Vectors: vectors,
 		db:      db,
+		ro:      ro,
 	}
 	a.Auth.SetSessionTTL(cfg.SessionTTL)
 	a.registerJobs()
@@ -129,6 +149,9 @@ func (a *App) Close() {
 	if a.db != nil {
 		_ = a.db.Close()
 	}
+	if a.ro != nil && a.ro != a.db {
+		_ = a.ro.Close()
+	}
 }
 
 func (a *App) registerJobs() {
@@ -158,16 +181,32 @@ func AssetJobData(assetID string) map[string]string {
 	return map[string]string{"assetId": assetID}
 }
 
-// mergeAssetUpdate re-reads the asset and applies mutate before writing,
-// so long-running background jobs never clobber concurrent user edits
-// (favorites, archive state, ...) with a stale row snapshot.
-func (a *App) mergeAssetUpdate(ctx context.Context, id string, mutate func(*domain.Asset)) error {
+// mergeAssetUpdate re-reads the asset and applies mutate before writing.
+// The whole read-modify-write cycle runs under assetMu so background jobs
+// and API handlers can never clobber each other's edits (a naive
+// Get→mutate→Update pair interleaves: last writer wins with a stale row).
+func (a *App) mergeAssetUpdate(ctx context.Context, id string, mutate func(*domain.Asset) error) (*domain.Asset, error) {
+	a.assetMu.Lock()
+	defer a.assetMu.Unlock()
 	asset, err := a.Store.Assets().Get(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	mutate(asset)
-	return a.Store.Assets().Update(ctx, asset)
+	if err := mutate(asset); err != nil {
+		return nil, err
+	}
+	if err := a.Store.Assets().Update(ctx, asset); err != nil {
+		return nil, err
+	}
+	return asset, nil
+}
+
+// UpdateAsset is the single mutation entry point for API handlers; it
+// returns the persisted row (ErrNotFound when the asset is missing).
+// mutate may abort the write by returning an error (e.g. ErrForbidden
+// for a foreign asset).
+func (a *App) UpdateAsset(ctx context.Context, id string, mutate func(*domain.Asset) error) (*domain.Asset, error) {
+	return a.mergeAssetUpdate(ctx, id, mutate)
 }
 
 func (a *App) handleExtractMetadata(ctx context.Context, _ string, data any) error {
@@ -263,13 +302,14 @@ func (a *App) handleExtractMetadata(ctx context.Context, _ string, data any) err
 	}
 	asset.Exif = exifRow
 	finalAsset := asset
-	if err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) {
+	if _, err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) error {
 		fresh.Width, fresh.Height = finalAsset.Width, finalAsset.Height
 		fresh.Exif = finalAsset.Exif
 		if finalAsset.Duration != nil {
 			fresh.Duration = finalAsset.Duration
 		}
 		fresh.LocalDateTime = finalAsset.LocalDateTime
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -305,9 +345,12 @@ func (a *App) handleGenerateThumbnails(ctx context.Context, _ string, data any) 
 		if err != nil {
 			return err
 		}
-		asset.ThumbnailPath = thumb
-		asset.PreviewPath = preview
-		return a.Store.Assets().Update(ctx, asset)
+		_, err = a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) error {
+			fresh.ThumbnailPath = thumb
+			fresh.PreviewPath = preview
+			return nil
+		})
+		return err
 	case domain.AssetVideo:
 		return a.generateVideoPoster(ctx, asset)
 	default:
@@ -344,10 +387,12 @@ func (a *App) generateVideoPoster(ctx context.Context, asset *domain.Asset) erro
 	if err != nil {
 		return err
 	}
-	return a.mergeAssetUpdate(ctx, asset.ID, func(fresh *domain.Asset) {
+	_, err = a.mergeAssetUpdate(ctx, asset.ID, func(fresh *domain.Asset) error {
 		fresh.ThumbnailPath = thumb
 		fresh.PreviewPath = preview
+		return nil
 	})
+	return err
 }
 
 func (a *App) handleSmartSearch(ctx context.Context, _ string, data any) error {
@@ -363,8 +408,9 @@ func (a *App) handleSmartSearch(ctx context.Context, _ string, data any) error {
 	if err != nil {
 		return fmt.Errorf("smart search embedding: %w", err)
 	}
-	if err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) {
+	if _, err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) error {
 		fresh.SmartEmbedding = vec
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -405,16 +451,17 @@ func (a *App) handleDetectFaces(ctx context.Context, _ string, data any) error {
 		})
 		if vec, err := ml.DecodeVector(f.Embedding); err == nil {
 			rows = append(rows, vectordb.FaceRow{
-				AssetID:  asset.ID,
-				FaceIdx:  i,
-				Box:      [4]int{f.BoundingBox.X1, f.BoundingBox.Y1, f.BoundingBox.X2, f.BoundingBox.Y2},
-				Vec:      vec,
+				AssetID: asset.ID,
+				FaceIdx: i,
+				Box:     [4]int{f.BoundingBox.X1, f.BoundingBox.Y1, f.BoundingBox.X2, f.BoundingBox.Y2},
+				Vec:     vec,
 			})
 		}
 	}
 	finalFaces := faces
-	if err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) {
+	if _, err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) error {
 		fresh.Faces = finalFaces
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -503,13 +550,14 @@ func (a *App) handleDuplicateDetection(ctx context.Context, _ string, _ any) err
 				continue
 			}
 			assetID := asset.ID
-			_ = a.mergeAssetUpdate(ctx, assetID, func(fresh *domain.Asset) {
+			_, _ = a.mergeAssetUpdate(ctx, assetID, func(fresh *domain.Asset) error {
 				if inGroup {
 					id := want
 					fresh.DuplicateID = &id
 				} else {
 					fresh.DuplicateID = nil
 				}
+				return nil
 			})
 		}
 		if len(grouped) > 0 {

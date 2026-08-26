@@ -80,7 +80,7 @@ func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
 		}
 		g := DuplicateGroup{ID: id, DuplicateCount: len(members)}
 		for _, m := range members {
-			g.Assets = append(g.Assets, s.assetResponse(m, false))
+			g.Assets = append(g.Assets, s.assetResponse(r.Context(), m, false))
 		}
 		out = append(out, g)
 	}

@@ -116,7 +116,7 @@ func (s *memoryStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *memoryStore) Get(ctx context.Context, id string) (*domain.Memory, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+memoryColumns+` FROM memories WHERE id = ?`, id)
+	row := s.ro.QueryRowContext(ctx, `SELECT `+memoryColumns+` FROM memories WHERE id = ?`, id)
 	m, err := scanMemory(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
@@ -131,7 +131,7 @@ func (s *memoryStore) Get(ctx context.Context, id string) (*domain.Memory, error
 }
 
 func (s *memoryStore) loadAssets(ctx context.Context, m *domain.Memory) error {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.ro.QueryContext(ctx,
 		`SELECT asset_id FROM memory_assets WHERE memory_id = ? ORDER BY position, asset_id`, m.ID)
 	if err != nil {
 		return err
@@ -148,7 +148,7 @@ func (s *memoryStore) loadAssets(ctx context.Context, m *domain.Memory) error {
 }
 
 func (s *memoryStore) ListForOwner(ctx context.Context, ownerID string) ([]*domain.Memory, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.ro.QueryContext(ctx,
 		`SELECT `+memoryColumns+` FROM memories WHERE owner_id = ? AND deleted_at IS NULL
 		 ORDER BY memory_at DESC, id`, ownerID)
 	if err != nil {
@@ -166,10 +166,35 @@ func (s *memoryStore) ListForOwner(ctx context.Context, ownerID string) ([]*doma
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// Batch asset hydration: one query for every memory in the list.
+	byID := make(map[string]*domain.Memory, len(out))
+	marks := make([]string, 0, len(out))
+	args := make([]any, 0, len(out))
 	for _, m := range out {
-		if err := s.loadAssets(ctx, m); err != nil {
+		byID[m.ID] = m
+		marks = append(marks, "?")
+		args = append(args, m.ID)
+	}
+	assetRows, err := s.ro.QueryContext(ctx, `
+		SELECT memory_id, asset_id FROM memory_assets
+		WHERE memory_id IN (`+strings.Join(marks, ",")+`) ORDER BY memory_id, position, asset_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for assetRows.Next() {
+		var memoryID, assetID string
+		if err := assetRows.Scan(&memoryID, &assetID); err != nil {
+			assetRows.Close()
 			return nil, err
 		}
+		if m, ok := byID[memoryID]; ok {
+			m.AssetIDs = append(m.AssetIDs, assetID)
+		}
+	}
+	err = assetRows.Err()
+	assetRows.Close()
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -179,7 +204,7 @@ func (s *memoryStore) ListForOwner(ctx context.Context, ownerID string) ([]*doma
 type syncAckStore Store
 
 func (s *syncAckStore) List(ctx context.Context, userID string) ([]domain.SyncAck, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.ro.QueryContext(ctx,
 		`SELECT type, ack FROM sync_acks WHERE user_id = ?`, userID)
 	if err != nil {
 		return nil, err
@@ -234,7 +259,7 @@ type metadataStore Store
 
 func (s *metadataStore) Get(ctx context.Context, key string) (string, bool, error) {
 	var value string
-	err := s.db.QueryRowContext(ctx,
+	err := s.ro.QueryRowContext(ctx,
 		`SELECT value FROM system_metadata WHERE key = ?`, key).Scan(&value)
 	if err == sql.ErrNoRows {
 		return "", false, nil

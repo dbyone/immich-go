@@ -189,9 +189,11 @@ func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	for _, asset := range assets {
 		if asset.DeletedAt != nil {
-			asset.DeletedAt = nil
-			asset.UpdatedAt = now
-			_ = s.app.Store.Assets().Update(r.Context(), asset)
+			_, _ = s.app.UpdateAsset(r.Context(), asset.ID, func(fresh *domain.Asset) error {
+				fresh.DeletedAt = nil
+				fresh.UpdatedAt = now
+				return nil
+			})
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -235,7 +237,7 @@ func (s *Server) searchMetadata(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]AssetResponse, 0, len(matches))
 	for _, asset := range matches {
-		out = append(out, s.assetResponse(asset, req.WithExif))
+		out = append(out, s.assetResponse(r.Context(), asset, req.WithExif))
 	}
 	writeJSON(w, http.StatusOK, SearchResponse{Albums: []AlbumResponse{}, Assets: out})
 }
@@ -354,7 +356,7 @@ func (s *Server) searchSmart(w http.ResponseWriter, r *http.Request) {
 		if err != nil || asset.OwnerID != a.User.ID {
 			continue
 		}
-		out = append(out, s.assetResponse(asset, req.WithExif))
+		out = append(out, s.assetResponse(r.Context(), asset, req.WithExif))
 	}
 	writeJSON(w, http.StatusOK, SearchResponse{Albums: []AlbumResponse{}, Assets: out})
 }

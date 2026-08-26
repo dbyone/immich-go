@@ -126,7 +126,7 @@ func (s *userStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *userStore) Get(ctx context.Context, id string) (*domain.User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id)
+	row := s.ro.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
@@ -135,7 +135,7 @@ func (s *userStore) Get(ctx context.Context, id string) (*domain.User, error) {
 }
 
 func (s *userStore) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email)
+	row := s.ro.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
@@ -144,7 +144,7 @@ func (s *userStore) GetByEmail(ctx context.Context, email string) (*domain.User,
 }
 
 func (s *userStore) List(ctx context.Context) ([]*domain.User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY created_at, id`)
+	rows, err := s.ro.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func (s *userStore) List(ctx context.Context) ([]*domain.User, error) {
 
 func (s *userStore) Count(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	err := s.ro.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
 }
 
@@ -226,7 +226,7 @@ func (s *sessionStore) DeleteAllForUser(ctx context.Context, userID string) erro
 }
 
 func (s *sessionStore) Get(ctx context.Context, id string) (*domain.Session, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, id)
+	row := s.ro.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, id)
 	sess, err := scanSession(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
@@ -235,7 +235,7 @@ func (s *sessionStore) Get(ctx context.Context, id string) (*domain.Session, err
 }
 
 func (s *sessionStore) GetByTokenHash(ctx context.Context, hash []byte) (*domain.Session, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.ro.QueryRowContext(ctx,
 		`SELECT `+sessionColumns+` FROM sessions WHERE token_hash = ? LIMIT 1`, hash)
 	sess, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -245,7 +245,7 @@ func (s *sessionStore) GetByTokenHash(ctx context.Context, hash []byte) (*domain
 }
 
 func (s *sessionStore) ListForUser(ctx context.Context, userID string) ([]*domain.Session, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.ro.QueryContext(ctx,
 		`SELECT `+sessionColumns+` FROM sessions WHERE user_id = ? ORDER BY created_at, id`, userID)
 	if err != nil {
 		return nil, err
@@ -309,7 +309,7 @@ func (s *apiKeyStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *apiKeyStore) Get(ctx context.Context, id string) (*domain.APIKey, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+apiKeyColumns+` FROM api_keys WHERE id = ?`, id)
+	row := s.ro.QueryRowContext(ctx, `SELECT `+apiKeyColumns+` FROM api_keys WHERE id = ?`, id)
 	k, err := scanAPIKey(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
@@ -318,7 +318,7 @@ func (s *apiKeyStore) Get(ctx context.Context, id string) (*domain.APIKey, error
 }
 
 func (s *apiKeyStore) GetByKeyHash(ctx context.Context, hash []byte) (*domain.APIKey, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.ro.QueryRowContext(ctx,
 		`SELECT `+apiKeyColumns+` FROM api_keys WHERE key_hash = ? LIMIT 1`, hash)
 	k, err := scanAPIKey(row)
 	if err == sql.ErrNoRows {
@@ -328,7 +328,7 @@ func (s *apiKeyStore) GetByKeyHash(ctx context.Context, hash []byte) (*domain.AP
 }
 
 func (s *apiKeyStore) ListForUser(ctx context.Context, userID string) ([]*domain.APIKey, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.ro.QueryContext(ctx,
 		`SELECT `+apiKeyColumns+` FROM api_keys WHERE user_id = ? ORDER BY created_at, id`, userID)
 	if err != nil {
 		return nil, err
