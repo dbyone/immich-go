@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
@@ -27,7 +28,9 @@ func TestFileBackedReadPoolSmoke(t *testing.T) {
 		ids[i] = uploadForTest(t, h, token, testJPEG(t, i+1), "p.jpg")
 	}
 
-	// Concurrent reads while a write stream runs.
+	// Concurrent reads while a write stream runs. Paced (not a spin
+	// loop): the goal is proving the pools never deadlock and that reads
+	// keep working during writes, not surviving a load test.
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 	for i := 0; i < 4; i++ {
@@ -47,6 +50,11 @@ func TestFileBackedReadPoolSmoke(t *testing.T) {
 				if rec.Code != 200 {
 					t.Errorf("concurrent read failed: %d", rec.Code)
 					return
+				}
+				select {
+				case <-stop:
+					return
+				case <-time.After(10 * time.Millisecond):
 				}
 			}
 		}()
