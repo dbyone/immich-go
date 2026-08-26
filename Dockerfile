@@ -1,6 +1,6 @@
 # Build stage — CGO links the prebuilt DuckDB static bindings, which are
 # glibc builds: use Debian (bookworm), not Alpine/musl.
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY go.mod go.sum ./
