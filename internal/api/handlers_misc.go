@@ -46,14 +46,18 @@ func (s *Server) resolveDuplicates(w http.ResponseWriter, r *http.Request) {
 				res.Success = false
 				res.Error = "not_found"
 			} else {
-				asset.DeletedAt = &now
-				asset.UpdatedAt = now
 				if keep[id] {
-					// A kept asset must not be trashed; ignore the overlap.
-					res.Error = "duplicate"
-				} else if err := s.app.Store.Assets().Update(r.Context(), asset); err != nil {
+					// A kept asset must not be trashed; the overlap is an
+					// error, not a silent no-op.
 					res.Success = false
-					res.Error = "unknown"
+					res.Error = "duplicate"
+				} else {
+					asset.DeletedAt = &now
+					asset.UpdatedAt = now
+					if err := s.app.Store.Assets().Update(r.Context(), asset); err != nil {
+						res.Success = false
+						res.Error = "unknown"
+					}
 				}
 			}
 			results = append(results, res)
@@ -259,7 +263,7 @@ func (s *Server) mapMarkers(w http.ResponseWriter, r *http.Request) {
 	}
 	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	out := []mapMarker{}
@@ -293,7 +297,7 @@ func (s *Server) folderView(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("originalPath")
 	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	out := []AssetResponse{}
@@ -312,7 +316,7 @@ func (s *Server) folderUniquePaths(w http.ResponseWriter, r *http.Request) {
 	}
 	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	seen := map[string]bool{}

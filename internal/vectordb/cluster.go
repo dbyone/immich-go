@@ -2,7 +2,6 @@ package vectordb
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -293,18 +292,4 @@ func (s *Store) DetectDuplicates(ctx context.Context, ownerID string, maxDistanc
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
 	return out, nil
-}
-
-// ClusterStats summarizes a clustering run for logging/diagnostics.
-type ClusterStats struct {
-	Faces    int
-	People   int
-	Noise    int
-	MinFaces int
-	Eps      float64
-}
-
-func (c ClusterStats) String() string {
-	return fmt.Sprintf("faces=%d people=%d noise=%d eps=%.3f minPts=%d",
-		c.Faces, c.People, c.Noise, c.Eps, c.MinFaces)
 }

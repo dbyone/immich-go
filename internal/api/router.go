@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -18,6 +19,10 @@ import (
 
 type Server struct {
 	app *app.App
+
+	// albumMu serializes read-modify-write membership mutations on albums
+	// and memories (the store has no row locking; single-instance guard).
+	albumMu sync.Mutex
 }
 
 func New(a *app.App) *Server { return &Server{app: a} }
@@ -46,124 +51,124 @@ func (s *Server) Router() http.Handler {
 		r.Post("/auth/login", s.authLogin)
 		r.Post("/auth/admin-sign-up", s.authAdminSignUp)
 
-		// --- authenticated ---
+		// --- authenticated; each route pins its API-key permission ---
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 
 			r.Post("/auth/validateToken", s.authValidateToken)
 			r.Post("/auth/logout", s.authLogout)
-			r.Post("/auth/change-password", s.authChangePassword)
+			r.With(s.perm("user.update")).Post("/auth/change-password", s.authChangePassword)
 			r.Get("/auth/status", s.authStatus)
 
-			r.Get("/users", s.listUsers)
+			r.With(s.perm("user.read")).Get("/users", s.listUsers)
 			r.Get("/users/me", s.getMe)
-			r.Patch("/users/me", s.updateMe)
+			r.With(s.perm("user.update")).Patch("/users/me", s.updateMe)
 			r.Get("/users/me/preferences", s.getMyPreferences)
-			r.Put("/users/me/preferences", s.updateMyPreferences)
-			r.Get("/users/{id}", s.getUser)
+			r.With(s.perm("user.update")).Put("/users/me/preferences", s.updateMyPreferences)
+			r.With(s.perm("user.read")).Get("/users/{id}", s.getUser)
 
 			// user-facing config + onboarding state
 			r.Get("/config", s.getUserConfig)
 			r.Get("/config/defaults", s.getUserConfigDefaults)
-			r.Get("/system-metadata/admin-onboarding", s.getAdminOnboarding)
-			r.Post("/system-metadata/admin-onboarding", s.updateAdminOnboarding)
-			r.Get("/server/apk-links", s.serverApkLinks)
-			r.Get("/server/version-check", s.serverVersionCheck)
+			r.With(s.perm("adminConfig.read")).Get("/system-metadata/admin-onboarding", s.getAdminOnboarding)
+			r.With(s.perm("adminConfig.update")).Post("/system-metadata/admin-onboarding", s.updateAdminOnboarding)
+			r.With(s.perm("server.read")).Get("/server/apk-links", s.serverApkLinks)
+			r.With(s.perm("server.read")).Get("/server/version-check", s.serverVersionCheck)
+			r.With(s.perm("server.read")).Get("/server/about", s.serverAbout)
+			r.With(s.perm("server.read")).Get("/server/config", s.serverConfig)
+			r.With(s.perm("server.read")).Get("/server/features", s.serverFeatures)
+			r.With(s.perm("server.read")).Get("/server/storage", s.serverStorage)
+			r.With(s.perm("adminServer.read")).Get("/server/statistics", s.serverStatistics)
 
-			r.Get("/api-keys", s.listAPIKeys)
-			r.Post("/api-keys", s.createAPIKey)
-			r.Get("/api-keys/me", s.getCurrentAPIKey)
-			r.Get("/api-keys/{id}", s.getAPIKey)
-			r.Put("/api-keys/{id}", s.updateAPIKey)
-			r.Delete("/api-keys/{id}", s.deleteAPIKey)
-			r.Post("/api-keys/{id}/rotate", s.rotateAPIKey)
+			r.With(s.perm("apiKey.read")).Get("/api-keys", s.listAPIKeys)
+			r.With(s.perm("apiKey.create")).Post("/api-keys", s.createAPIKey)
+			r.With(s.perm("apiKey.read")).Get("/api-keys/me", s.getCurrentAPIKey)
+			r.With(s.perm("apiKey.read")).Get("/api-keys/{id}", s.getAPIKey)
+			r.With(s.perm("apiKey.update")).Put("/api-keys/{id}", s.updateAPIKey)
+			r.With(s.perm("apiKey.delete")).Delete("/api-keys/{id}", s.deleteAPIKey)
+			r.With(s.perm("apiKey.rotate")).Post("/api-keys/{id}/rotate", s.rotateAPIKey)
 
-			r.Get("/sessions", s.listSessions)
-			r.Delete("/sessions", s.deleteAllSessions)
-			r.Delete("/sessions/{id}", s.deleteSession)
+			r.With(s.perm("session.read")).Get("/sessions", s.listSessions)
+			r.With(s.perm("session.delete")).Delete("/sessions", s.deleteAllSessions)
+			r.With(s.perm("session.delete")).Delete("/sessions/{id}", s.deleteSession)
 
-			r.Post("/assets", s.uploadAsset)
-			r.Get("/assets/statistics", s.assetStatistics)
-			r.Post("/assets/bulk-upload-check", s.bulkUploadCheck)
-			r.Post("/assets/jobs", s.assetJobs)
-			r.Put("/assets", s.bulkUpdateAssets)
-			r.Delete("/assets", s.bulkDeleteAssets)
-			r.Get("/assets/{id}", s.getAsset)
-			r.Put("/assets/{id}", s.updateAsset)
-			r.Get("/assets/{id}/original", s.getAssetOriginal)
-			r.Get("/assets/{id}/thumbnail", s.getAssetThumbnail)
-			r.Get("/assets/{id}/video/playback", s.getAssetVideoPlayback)
+			r.With(s.perm("asset.create")).Post("/assets", s.uploadAsset)
+			r.With(s.perm("asset.read")).Get("/assets/statistics", s.assetStatistics)
+			r.With(s.perm("asset.create")).Post("/assets/bulk-upload-check", s.bulkUploadCheck)
+			r.With(s.perm("asset.update")).Post("/assets/jobs", s.assetJobs)
+			r.With(s.perm("asset.update")).Put("/assets", s.bulkUpdateAssets)
+			r.With(s.perm("asset.delete")).Delete("/assets", s.bulkDeleteAssets)
+			r.With(s.perm("asset.read")).Get("/assets/{id}", s.getAsset)
+			r.With(s.perm("asset.update")).Put("/assets/{id}", s.updateAsset)
+			r.With(s.perm("asset.download")).Get("/assets/{id}/original", s.getAssetOriginal)
+			r.With(s.perm("asset.read")).Get("/assets/{id}/thumbnail", s.getAssetThumbnail)
+			r.With(s.perm("asset.read")).Get("/assets/{id}/video/playback", s.getAssetVideoPlayback)
 
-			r.Get("/albums", s.listAlbums)
-			r.Post("/albums", s.createAlbum)
-			r.Put("/albums/assets", s.addAssetsToAlbums)
-			r.Get("/albums/statistics", s.albumStatistics)
-			r.Get("/albums/{id}", s.getAlbum)
-			r.Patch("/albums/{id}", s.updateAlbum)
-			r.Delete("/albums/{id}", s.deleteAlbum)
-			r.Put("/albums/{id}/assets", s.addAssetsToAlbum)
-			r.Delete("/albums/{id}/assets", s.removeAssetsFromAlbum)
-			r.Put("/albums/{id}/users", s.addUsersToAlbum)
-			r.Delete("/albums/{id}/user/{userId}", s.removeUserFromAlbum)
+			r.With(s.perm("album.read")).Get("/albums", s.listAlbums)
+			r.With(s.perm("album.create")).Post("/albums", s.createAlbum)
+			r.With(s.perm("album.update")).Put("/albums/assets", s.addAssetsToAlbums)
+			r.With(s.perm("album.read")).Get("/albums/statistics", s.albumStatistics)
+			r.With(s.perm("album.read")).Get("/albums/{id}", s.getAlbum)
+			r.With(s.perm("album.update")).Patch("/albums/{id}", s.updateAlbum)
+			r.With(s.perm("album.delete")).Delete("/albums/{id}", s.deleteAlbum)
+			r.With(s.perm("album.update")).Put("/albums/{id}/assets", s.addAssetsToAlbum)
+			r.With(s.perm("album.update")).Delete("/albums/{id}/assets", s.removeAssetsFromAlbum)
+			r.With(s.perm("album.update")).Put("/albums/{id}/users", s.addUsersToAlbum)
+			r.With(s.perm("album.update")).Delete("/albums/{id}/user/{userId}", s.removeUserFromAlbum)
 
-			r.Get("/timeline/buckets", s.timelineBuckets)
-			r.Get("/timeline/bucket", s.timelineBucket)
+			r.With(s.perm("asset.read")).Get("/timeline/buckets", s.timelineBuckets)
+			r.With(s.perm("asset.read")).Get("/timeline/bucket", s.timelineBucket)
 
-			r.Post("/search/metadata", s.searchMetadata)
-			r.Post("/search/smart", s.searchSmart)
+			r.With(s.perm("asset.read")).Post("/search/metadata", s.searchMetadata)
+			r.With(s.perm("asset.read")).Post("/search/smart", s.searchSmart)
 
-			r.Get("/people", s.listPeople)
-			r.Post("/people", s.createPerson)
-			r.Put("/people", s.updatePeopleBulk)
-			r.Delete("/people", s.deletePeopleBulk)
-			r.Get("/people/{id}", s.getPersonDetail)
-			r.Put("/people/{id}", s.updatePerson)
-			r.Delete("/people/{id}", s.deletePerson)
-			r.Post("/people/{id}/merge", s.mergePerson)
-			r.Put("/people/{id}/reassign", s.reassignFaces)
-			r.Get("/people/{id}/statistics", s.personStatistics)
-			r.Get("/people/{id}/thumbnail", s.personThumbnail)
-			r.Get("/duplicates", s.listDuplicates)
-			r.Post("/duplicates/resolve", s.resolveDuplicates)
-			r.Delete("/duplicates", s.deleteDuplicatesBulk)
-			r.Delete("/duplicates/{id}", s.deleteDuplicateGroup)
+			r.With(s.perm("person.read")).Get("/people", s.listPeople)
+			r.With(s.perm("person.create")).Post("/people", s.createPerson)
+			r.With(s.perm("person.update")).Put("/people", s.updatePeopleBulk)
+			r.With(s.perm("person.delete")).Delete("/people", s.deletePeopleBulk)
+			r.With(s.perm("person.read")).Get("/people/{id}", s.getPersonDetail)
+			r.With(s.perm("person.update")).Put("/people/{id}", s.updatePerson)
+			r.With(s.perm("person.delete")).Delete("/people/{id}", s.deletePerson)
+			r.With(s.perm("person.update")).Post("/people/{id}/merge", s.mergePerson)
+			r.With(s.perm("person.update")).Put("/people/{id}/reassign", s.reassignFaces)
+			r.With(s.perm("person.read")).Get("/people/{id}/statistics", s.personStatistics)
+			r.With(s.perm("person.read")).Get("/people/{id}/thumbnail", s.personThumbnail)
+
+			r.With(s.perm("asset.read")).Get("/duplicates", s.listDuplicates)
+			r.With(s.perm("asset.update")).Post("/duplicates/resolve", s.resolveDuplicates)
+			r.With(s.perm("asset.update")).Delete("/duplicates", s.deleteDuplicatesBulk)
+			r.With(s.perm("asset.update")).Delete("/duplicates/{id}", s.deleteDuplicateGroup)
 
 			// memories
-			r.Get("/memories", s.listMemories)
-			r.Post("/memories", s.createMemory)
-			r.Get("/memories/statistics", s.memoriesStatistics)
-			r.Get("/memories/{id}", s.getMemory)
-			r.Put("/memories/{id}", s.updateMemory)
-			r.Delete("/memories/{id}", s.deleteMemory)
-			r.Put("/memories/{id}/assets", s.memoryAssetsUpdate(true))
-			r.Delete("/memories/{id}/assets", s.memoryAssetsUpdate(false))
+			r.With(s.perm("memory.read")).Get("/memories", s.listMemories)
+			r.With(s.perm("memory.create")).Post("/memories", s.createMemory)
+			r.With(s.perm("memory.read")).Get("/memories/statistics", s.memoriesStatistics)
+			r.With(s.perm("memory.read")).Get("/memories/{id}", s.getMemory)
+			r.With(s.perm("memory.update")).Put("/memories/{id}", s.updateMemory)
+			r.With(s.perm("memory.delete")).Delete("/memories/{id}", s.deleteMemory)
+			r.With(s.perm("memory.update")).Put("/memories/{id}/assets", s.memoryAssetsUpdate(true))
+			r.With(s.perm("memory.update")).Delete("/memories/{id}/assets", s.memoryAssetsUpdate(false))
 
 			// sync (basic)
-			r.Get("/sync/ack", s.getSyncAck)
-			r.Post("/sync/ack", s.sendSyncAck)
-			r.Delete("/sync/ack", s.deleteSyncAck)
-			r.Post("/sync/stream", s.syncStream)
+			r.With(s.perm("sync.stream")).Get("/sync/ack", s.getSyncAck)
+			r.With(s.perm("sync.stream")).Post("/sync/ack", s.sendSyncAck)
+			r.With(s.perm("sync.stream")).Delete("/sync/ack", s.deleteSyncAck)
+			r.With(s.perm("sync.stream")).Post("/sync/stream", s.syncStream)
 
 			// download / map / folder view
-			r.Post("/download/info", s.downloadInfo)
-			r.Post("/download/archive", s.downloadArchive)
-			r.Get("/map/markers", s.mapMarkers)
-			r.Get("/map/reverse-geocode", s.reverseGeocode)
-			r.Get("/view/folder", s.folderView)
-			r.Get("/view/folder/unique-paths", s.folderUniquePaths)
+			r.With(s.perm("asset.download")).Post("/download/info", s.downloadInfo)
+			r.With(s.perm("asset.download")).Post("/download/archive", s.downloadArchive)
+			r.With(s.perm("asset.read")).Get("/map/markers", s.mapMarkers)
+			r.With(s.perm("asset.read")).Get("/map/reverse-geocode", s.reverseGeocode)
+			r.With(s.perm("asset.read")).Get("/view/folder", s.folderView)
+			r.With(s.perm("asset.read")).Get("/view/folder/unique-paths", s.folderUniquePaths)
 
-			r.Post("/trash/empty", s.emptyTrash)
-			r.Post("/trash/restore", s.restoreTrash)
+			r.With(s.perm("asset.update")).Post("/trash/empty", s.emptyTrash)
+			r.With(s.perm("asset.update")).Post("/trash/restore", s.restoreTrash)
 
-			r.Get("/jobs", s.listJobs)
-			r.Post("/jobs", s.createJob)
-			r.Put("/jobs/{name}", s.commandJob)
-
-			r.Get("/server/about", s.serverAbout)
-			r.Get("/server/config", s.serverConfig)
-			r.Get("/server/features", s.serverFeatures)
-			r.Get("/server/storage", s.serverStorage)
-			r.Get("/server/statistics", s.serverStatistics)
+			r.With(s.perm("adminQueue.read")).Get("/jobs", s.listJobs)
+			r.With(s.perm("adminQueue.run")).Post("/jobs", s.createJob)
+			r.With(s.perm("adminQueue.update")).Put("/jobs/{name}", s.commandJob)
 		})
 	})
 
@@ -225,6 +230,26 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// perm enforces the API-key scope for one route centrally; session
+// callers always pass (they hold every permission). Handlers may keep
+// their own checks as defense in depth.
+func (s *Server) perm(permission string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a := auth.FromRequest(r)
+			if a == nil {
+				writeJSON(w, http.StatusUnauthorized, apiError{Message: "Invalid token", Error: "Unauthorized", StatusCode: 401})
+				return
+			}
+			if !a.HasPermission(permission) {
+				writeJSON(w, http.StatusForbidden, apiError{Message: "Missing permission: " + permission, Error: "Forbidden", StatusCode: 403})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // caller returns the resolved auth context or writes a 401.
 func caller(w http.ResponseWriter, r *http.Request) *auth.AuthContext {
 	a := auth.FromRequest(r)
@@ -263,14 +288,21 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, apiError{Message: msg, Error: reason, StatusCode: status})
 }
 
-func storeError(w http.ResponseWriter, err error) {
+// writeInternal logs the real error and answers with a generic message —
+// DuckDB errors, paths and ML URLs never reach the client.
+func (s *Server) writeInternal(w http.ResponseWriter, err error) {
+	s.app.Log.Error("internal error", "err", err)
+	writeError(w, http.StatusInternalServerError, "Internal error")
+}
+
+func (s *Server) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "Not found")
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "Conflict")
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 	}
 }
 

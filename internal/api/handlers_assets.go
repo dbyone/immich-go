@@ -87,6 +87,13 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		name := part.FormName()
 		switch name {
 		case "assetData", "file":
+			if savedPath != "" {
+				// A second file part would orphan the first upload on
+				// disk; drain and ignore it.
+				io.Copy(io.Discard, part)
+				part.Close()
+				continue
+			}
 			fileName := part.FileName()
 			if fileName == "" {
 				fileName = "upload.bin"
@@ -209,7 +216,7 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.app.Store.Assets().Create(r.Context(), asset); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 
@@ -303,7 +310,7 @@ func (s *Server) updateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	asset.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.Assets().Update(r.Context(), asset); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.assetResponse(asset, true))
@@ -361,7 +368,9 @@ func (s *Server) bulkUploadCheck(w http.ResponseWriter, r *http.Request) {
 	for _, item := range req.Assets {
 		res := result{ID: item.ID, Action: "accept"}
 		if sum, ok := crypto.DecodeB64SHA1(item.Checksum); ok {
-			if existing, err := s.app.Store.Assets().GetByChecksum(r.Context(), a.User.ID, sum); err == nil {
+			// Match trashed assets too: the client can then un-trash
+			// instead of re-uploading (upstream isTrashed semantics).
+			if existing, err := s.app.Store.Assets().GetByChecksumAny(r.Context(), a.User.ID, sum); err == nil {
 				res.Action = "reject"
 				reason := "duplicate"
 				res.Reason = &reason

@@ -251,3 +251,19 @@ func (s *metadataStore) Set(ctx context.Context, key, value string) error {
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
+
+// SetIfAbsent claims a key atomically: INSERT ... DO NOTHING keeps the
+// second caller from winning.
+func (s *metadataStore) SetIfAbsent(ctx context.Context, key, value string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO system_metadata (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO NOTHING`, key, value)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, nil
+	}
+	return n > 0, nil
+}

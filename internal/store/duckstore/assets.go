@@ -235,6 +235,22 @@ func (s *assetStore) GetByChecksum(ctx context.Context, ownerID string, checksum
 	return a, nil
 }
 
+func (s *assetStore) GetByChecksumAny(ctx context.Context, ownerID string, checksum []byte) (*domain.Asset, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+assetColumns+` FROM assets
+		WHERE owner_id = ? AND checksum = ?
+		LIMIT 1`, ownerID, checksum)
+	a, err := scanAsset(row)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.loadExif(ctx, a)
+	return a, nil
+}
+
 func (s *assetStore) listWhere(ctx context.Context, where string, args ...any) ([]*domain.Asset, error) {
 	query := `SELECT ` + assetColumns + ` FROM assets` + where + ` ORDER BY created_at, id`
 	rows, err := s.db.QueryContext(ctx, query, args...)

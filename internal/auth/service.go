@@ -31,9 +31,13 @@ var dummyHash, _ = crypto.HashPassword("invalid-password-placeholder")
 
 type Service struct {
 	store store.Store
+	ttl   time.Duration // 0 = sessions never expire
 }
 
 func NewService(s store.Store) *Service { return &Service{store: s} }
+
+// SetSessionTTL overrides the session lifetime (used from config).
+func (s *Service) SetSessionTTL(ttl time.Duration) { s.ttl = ttl }
 
 type LoginInput struct {
 	Email      string
@@ -64,6 +68,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	}
 
 	token := crypto.RandomToken()
+	now := time.Now().UTC()
 	sess := &domain.Session{
 		ID:         crypto.NewUUID(),
 		TokenHash:  crypto.HashToken(token),
@@ -71,8 +76,12 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 		DeviceOS:   in.DeviceOS,
 		DeviceType: in.DeviceType,
 		AppVersion: in.AppVersion,
-		CreatedAt:  time.Now().UTC(),
-		UpdatedAt:  time.Now().UTC(),
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if s.ttl > 0 {
+		expires := now.Add(s.ttl)
+		sess.ExpiresAt = &expires
 	}
 	if err := s.store.Sessions().Create(ctx, sess); err != nil {
 		return nil, err

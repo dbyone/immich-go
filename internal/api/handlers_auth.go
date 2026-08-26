@@ -8,7 +8,6 @@ import (
 	"immich-go/internal/auth"
 	"immich-go/internal/crypto"
 	"immich-go/internal/domain"
-	"immich-go/internal/store"
 )
 
 const cookieMaxAge = 400 * 24 * time.Hour // mirrors the upstream cookie lifetime
@@ -20,9 +19,15 @@ type loginRequest struct {
 	DeviceType string `json:"deviceType"`
 }
 
+// isSecureRequest honors X-Forwarded-Proto so cookies stay consistent
+// behind TLS-terminating proxies.
+func isSecureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 // setAuthCookies mirrors src/utils/response.ts setAuthCookies.
 func setAuthCookies(w http.ResponseWriter, r *http.Request, token string) {
-	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	secure := isSecureRequest(r)
 	setCookie(w, "immich_access_token", token, true, secure)
 	setCookie(w, "immich_auth_type", "password", true, secure)
 	setCookie(w, "immich_is_authenticated", "true", false, secure)
@@ -41,7 +46,7 @@ func setCookie(w http.ResponseWriter, name, value string, httpOnly, secure bool)
 }
 
 func clearAuthCookies(w http.ResponseWriter, r *http.Request) {
-	secure := r.TLS != nil
+	secure := isSecureRequest(r)
 	for _, name := range []string{"immich_access_token", "immich_auth_type", "immich_is_authenticated"} {
 		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, Secure: secure, SameSite: http.SameSiteLaxMode})
 	}
@@ -97,6 +102,8 @@ type signUpRequest struct {
 	Password string `json:"password"`
 }
 
+const adminBootstrapKey = "admin-bootstrapped"
+
 func (s *Server) authAdminSignUp(w http.ResponseWriter, r *http.Request) {
 	var req signUpRequest
 	if err := decodeJSON(r, &req); err != nil || req.Email == "" || req.Password == "" || req.Name == "" {
@@ -104,15 +111,26 @@ func (s *Server) authAdminSignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The endpoint is only valid while the instance has no users.
+	// The endpoint is only valid while the instance has no users. The
+	// atomic sentinel claim closes the TOCTOU window two concurrent
+	// sign-ups would otherwise race through.
 	if count, _ := s.app.Store.Users().Count(r.Context()); count > 0 {
+		writeError(w, http.StatusBadRequest, "The server already has an admin")
+		return
+	}
+	claimed, err := s.app.Store.Metadata().SetIfAbsent(r.Context(), adminBootstrapKey, "1")
+	if err != nil {
+		s.writeInternal(w, err)
+		return
+	}
+	if !claimed {
 		writeError(w, http.StatusBadRequest, "The server already has an admin")
 		return
 	}
 
 	hash, err := crypto.HashPassword(req.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	now := time.Now().UTC()
@@ -128,7 +146,7 @@ func (s *Server) authAdminSignUp(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   now,
 	}
 	if err := s.app.Store.Users().Create(r.Context(), user); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, userResponse(user))
@@ -183,7 +201,7 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := crypto.HashPassword(req.NewPassword)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	user := a.User
@@ -191,7 +209,7 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 	user.ShouldChangePassword = false
 	user.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.Users().Update(r.Context(), user); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, userResponse(user))
@@ -205,7 +223,7 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.app.Store.Users().List(r.Context())
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	out := make([]UserResponse, 0, len(users))
@@ -247,7 +265,7 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	user.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.Users().Update(r.Context(), user); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, userResponse(user))
@@ -259,7 +277,7 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := s.app.Store.Users().Get(r.Context(), chiURLParam(r, "id"))
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, userResponse(u))
@@ -274,7 +292,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	keys, err := s.app.Store.APIKeys().ListForUser(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	out := make([]APIKeyResponse, 0, len(keys))
@@ -311,7 +329,7 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	key, secret, err := s.app.Auth.CreateAPIKey(r.Context(), a.User.ID, req.Name, req.Permissions)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	resp := APIKeyCreateResponse{
@@ -376,7 +394,7 @@ func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	key.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.APIKeys().Update(r.Context(), key); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, apiKeyResponse(key))
@@ -393,7 +411,7 @@ func (s *Server) deleteAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.app.Store.APIKeys().Delete(r.Context(), key.ID); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -406,7 +424,7 @@ func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	key, secret, err := s.app.Auth.RotateAPIKey(r.Context(), chiURLParam(r, "id"), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	resp := APIKeyCreateResponse{
@@ -431,7 +449,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions, err := s.app.Store.Sessions().ListForUser(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	out := make([]SessionResponse, 0, len(sessions))
@@ -484,7 +502,7 @@ func (s *Server) deleteAllSessions(w http.ResponseWriter, r *http.Request) {
 	// Every session of the user except the current one is revoked.
 	sessions, err := s.app.Store.Sessions().ListForUser(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	for _, sess := range sessions {
@@ -495,5 +513,3 @@ func (s *Server) deleteAllSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-var _ = store.ErrNotFound // referenced to keep the import meaningful

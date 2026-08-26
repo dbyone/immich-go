@@ -76,7 +76,7 @@ func (s *Server) updateMyPreferences(w http.ResponseWriter, r *http.Request) {
 	user := a.User
 	user.Preferences = string(body)
 	if err := s.app.Store.Users().Update(r.Context(), user); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, mergeOverDefaults(user.Preferences))
@@ -92,7 +92,7 @@ func (s *Server) getAdminOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 	_, set, err := s.app.Store.Metadata().Get(r.Context(), onboardingKey)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"isOnboarded": set})
@@ -114,7 +114,7 @@ func (s *Server) updateAdminOnboarding(w http.ResponseWriter, r *http.Request) {
 		v = "true"
 	}
 	if err := s.app.Store.Metadata().Set(r.Context(), onboardingKey, v); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

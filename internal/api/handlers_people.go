@@ -28,7 +28,7 @@ func (s *Server) listPeople(w http.ResponseWriter, r *http.Request) {
 	}
 	persons, err := s.app.Vectors.ListPersons(r.Context(), a.User.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	out := make([]PersonResponse, 0, len(persons))
@@ -64,7 +64,7 @@ func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
 	}
 	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	groups := map[string][]*domain.Asset{}

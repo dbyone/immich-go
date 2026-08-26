@@ -360,6 +360,18 @@ func (s *assetStore) GetByChecksum(_ context.Context, ownerID string, checksum [
 	return nil, store.ErrNotFound
 }
 
+func (s *assetStore) GetByChecksumAny(_ context.Context, ownerID string, checksum []byte) (*domain.Asset, error) {
+	m := (*Memory)(s)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.assets {
+		if a.OwnerID == ownerID && string(a.Checksum) == string(checksum) {
+			return cloneAsset(a), nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
 func (s *assetStore) List(_ context.Context) ([]*domain.Asset, error) {
 	return s.listFiltered(func(*domain.Asset) bool { return true })
 }
@@ -586,4 +598,15 @@ func (s *metadataStore) Set(_ context.Context, key, value string) error {
 	defer mm.mu.Unlock()
 	mm.meta[key] = value
 	return nil
+}
+
+func (s *metadataStore) SetIfAbsent(_ context.Context, key, value string) (bool, error) {
+	mm := (*Memory)(s)
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	if _, exists := mm.meta[key]; exists {
+		return false, nil
+	}
+	mm.meta[key] = value
+	return true, nil
 }

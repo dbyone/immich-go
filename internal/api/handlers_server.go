@@ -132,7 +132,7 @@ func (s *Server) serverFeatures(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) serverStorage(w http.ResponseWriter, _ *http.Request) {
 	stats, err := diskStats(s.app.Storage.Root())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, ServerStorageResponse{
@@ -226,7 +226,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if jobName, ok := manualJobTriggers[req.Name]; ok {
 		if err := s.app.Jobs.Queue(jobName, map[string]string{"trigger": "manual"}); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			s.writeInternal(w, err)
 			return
 		}
 	}
@@ -274,5 +274,3 @@ func (s *Server) commandJob(w http.ResponseWriter, r *http.Request) {
 		QueueStatus: QueueStatusDTO(q.Status),
 	})
 }
-
-var _ = jobs.AllQueues

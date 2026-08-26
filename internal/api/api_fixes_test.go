@@ -7,12 +7,14 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"immich-go/internal/config"
 	"immich-go/internal/crypto"
 	"immich-go/internal/domain"
+	"immich-go/internal/vectordb"
 )
 
 // TestAlbumBulkAddRejectsForeignAssets: a shared album member must not
@@ -206,5 +208,204 @@ func TestUploadLimitExceeded(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized upload: want 413, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReassignRejectsForeignPerson: faces may only move to the caller's
+// own people.
+func TestReassignRejectsForeignPerson(t *testing.T) {
+	h, a := newTestServerApp(t, nil)
+	token := loginForTest(t, h, "reassign@t.c")
+
+	// Seed a foreign person owned by another user.
+	if err := a.Store.Users().Create(context.Background(), &domain.User{
+		ID: "victim", Email: "victim@t.c", Password: "x", Name: "Victim",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	foreign := &vectordb.Person{ID: "victim-person", OwnerID: "victim", Name: "V"}
+	if err := a.Vectors.CreatePerson(context.Background(), foreign); err != nil {
+		t.Fatal(err)
+	}
+
+	// Caller creates their own person to reassign from.
+	_, body := doJSON(t, h, http.MethodPost, "/api/people", token, map[string]any{"name": "Me"})
+	mineID, _ := asMap(t, body)["id"].(string)
+
+	code, _ := doJSON(t, h, http.MethodPut, "/api/people/"+mineID+"/reassign", token,
+		map[string]any{"data": []map[string]any{{"assetId": "whatever", "personId": "victim-person"}}})
+	if code != http.StatusBadRequest {
+		t.Fatalf("foreign reassign must 400, got %d", code)
+	}
+}
+
+// TestAlbumViewerCannotMutate: viewers must not add or remove assets.
+func TestAlbumViewerCannotMutate(t *testing.T) {
+	h, a := newTestServerApp(t, nil)
+	ownerToken := loginForTest(t, h, "owner2@t.c")
+
+	partnerHash, _ := crypto.HashPassword("password123")
+	partnerID := crypto.NewUUID()
+	if err := a.Store.Users().Create(context.Background(), &domain.User{
+		ID: partnerID, Email: "viewer@t.c", Password: partnerHash, Name: "Viewer",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := doJSON(t, h, http.MethodPost, "/api/auth/login", "", map[string]any{
+		"email": "viewer@t.c", "password": "password123",
+	})
+	viewerToken, _ := asMap(t, body)["accessToken"].(string)
+
+	_, body = doJSON(t, h, http.MethodPost, "/api/albums", ownerToken, map[string]any{
+		"albumName":  "ViewOnly",
+		"albumUsers": []map[string]any{{"userId": partnerID, "role": "viewer"}},
+	})
+	albumID, _ := asMap(t, body)["id"].(string)
+
+	code, _ := doJSON(t, h, http.MethodPut, "/api/albums/"+albumID+"/assets", viewerToken,
+		map[string]any{"assetIds": []string{"irrelevant"}})
+	if code != http.StatusForbidden {
+		t.Fatalf("viewer add must 403, got %d", code)
+	}
+	code, _ = doJSON(t, h, http.MethodDelete, "/api/albums/"+albumID+"/assets", viewerToken,
+		map[string]any{"assetIds": []string{"irrelevant"}})
+	if code != http.StatusForbidden {
+		t.Fatalf("viewer remove must 403, got %d", code)
+	}
+}
+
+// TestNarrowAPIKeyBlockedByRoutePermission: a read-only key must not
+// reach mutating routes even though handler code forgot to check.
+func TestNarrowAPIKeyBlockedByRoutePermission(t *testing.T) {
+	h := newTestServer(t)
+	token := loginForTest(t, h, "narrow@t.c")
+
+	_, body := doJSON(t, h, http.MethodPost, "/api/api-keys", token, map[string]any{
+		"name": "ro", "permissions": []string{"album.read", "asset.read"},
+	})
+	secret, _ := asMap(t, body)["secret"].(string)
+
+	// Reads pass.
+	req := httptest.NewRequest(http.MethodGet, "/api/albums", nil)
+	req.Header.Set("x-api-key", secret)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("album.read GET /albums: %d", rec.Code)
+	}
+
+	// Mutations blocked at the router regardless of handler internals.
+	checks := []struct{ method, path string }{
+		{http.MethodDelete, "/api/assets"},
+		{http.MethodPut, "/api/assets"},
+		{http.MethodPost, "/api/trash/empty"},
+	}
+	for _, c := range checks {
+		req := httptest.NewRequest(c.method, c.path, strings.NewReader(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", secret)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s with read-only key: want 403, got %d", c.method, c.path, rec.Code)
+		}
+	}
+}
+
+// TestSessionExpiry: tokens past the TTL stop authenticating.
+func TestSessionExpiry(t *testing.T) {
+	h := newTestServerCfg(t, func(cfg *config.Config) {
+		cfg.SessionTTL = 20 * time.Millisecond
+	})
+	token := loginForTest(t, h, "expire@t.c")
+
+	code, _ := doJSON(t, h, http.MethodGet, "/api/users/me", token, nil)
+	if code != 200 {
+		t.Fatalf("fresh token must work: %d", code)
+	}
+	time.Sleep(60 * time.Millisecond)
+	code, _ = doJSON(t, h, http.MethodGet, "/api/users/me", token, nil)
+	if code != 401 {
+		t.Fatalf("expired token must 401: %d", code)
+	}
+}
+
+// TestDuplicatesNotResurrected: after resolving a group, rerunning
+// detection must not bring it back while a member is trashed.
+func TestDuplicatesNotResurrected(t *testing.T) {
+	h := newTestServer(t)
+	token := loginForTest(t, h, "resurrect@t.c")
+
+	id1 := uploadForTest(t, h, token, testJPEG(t, 1), "r1.jpg")
+	id2 := uploadForTest(t, h, token, testJPEG(t, 2), "r2.jpg")
+
+	deadline := time.Now().Add(20 * time.Second)
+	var groupID string
+	for time.Now().Before(deadline) {
+		doJSON(t, h, http.MethodPost, "/api/jobs", token, map[string]any{"name": "detect-duplicates"})
+		_, body := doJSON(t, h, http.MethodGet, "/api/duplicates", token, nil)
+		if groups, _ := body.([]any); len(groups) == 1 {
+			groupID, _ = asMap(t, groups[0])["id"].(string)
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if groupID == "" {
+		t.Fatal("duplicate group never appeared")
+	}
+
+	// Resolve: keep id1, trash id2.
+	code, _ := doJSON(t, h, http.MethodPost, "/api/duplicates/resolve", token, map[string]any{
+		"groups": []map[string]any{{
+			"duplicateId": groupID, "keepAssetIds": []string{id1}, "trashAssetIds": []string{id2},
+		}},
+	})
+	if code != 200 {
+		t.Fatalf("resolve: %d", code)
+	}
+
+	// Re-run detection; the group must stay dissolved.
+	for i := 0; i < 3; i++ {
+		doJSON(t, h, http.MethodPost, "/api/jobs", token, map[string]any{"name": "detect-duplicates"})
+		time.Sleep(300 * time.Millisecond)
+	}
+	_, body := doJSON(t, h, http.MethodGet, "/api/duplicates", token, nil)
+	if groups, _ := body.([]any); len(groups) != 0 {
+		t.Fatalf("resolved group resurrected: %v", groups)
+	}
+}
+
+// TestBulkUploadCheckReportsTrashed: a trashed duplicate must be
+// reported as reject+isTrashed instead of forcing a re-upload.
+func TestBulkUploadCheckReportsTrashed(t *testing.T) {
+	h := newTestServer(t)
+	token := loginForTest(t, h, "trashed@t.c")
+
+	jpg := testJPEG(t, 7)
+	id := uploadForTest(t, h, token, jpg, "t.jpg")
+	code, _ := doJSON(t, h, http.MethodDelete, "/api/assets", token, map[string]any{"ids": []string{id}})
+	if code != 204 {
+		t.Fatalf("soft delete: %d", code)
+	}
+
+	sumB64, _, err := crypto.Sha1B64(bytes.NewReader(jpg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, body := doJSON(t, h, http.MethodPost, "/api/assets/bulk-upload-check", token, map[string]any{
+		"assets": []map[string]any{{"id": "device-1", "checksum": sumB64}},
+	})
+	if code != 200 {
+		t.Fatalf("bulk check: %d", code)
+	}
+	results, _ := asMap(t, body)["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("bulk check results: %v", body)
+	}
+	res := asMap(t, results[0])
+	if res["action"] != "reject" || res["isTrashed"] != true {
+		t.Fatalf("trashed duplicate must reject with isTrashed: %v", res)
 	}
 }

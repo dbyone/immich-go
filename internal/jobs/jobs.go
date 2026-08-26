@@ -109,8 +109,11 @@ func (q *queue) counts() (JobCounts, QueueStatus) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	c := q.stats
-	c.Waiting = int64(len(q.waiting))
-	c.Paused = 0
+	if q.paused {
+		c.Paused = int64(len(q.waiting))
+	} else {
+		c.Waiting = int64(len(q.waiting))
+	}
 	return c, QueueStatus{IsActive: c.Active > 0, IsPaused: q.paused}
 }
 

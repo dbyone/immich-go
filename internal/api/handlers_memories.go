@@ -64,7 +64,7 @@ func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
 	}
 	memories, err := s.app.Store.Memories().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	out := make([]MemoryResponse, 0, len(memories))
@@ -132,7 +132,7 @@ func (s *Server) createMemory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.app.Store.Memories().Create(r.Context(), m); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, s.memoryResponse(r, m))
@@ -202,7 +202,7 @@ func (s *Server) updateMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	m.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.Memories().Update(r.Context(), m); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.memoryResponse(r, m))
@@ -219,7 +219,7 @@ func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.app.Store.Memories().Delete(r.Context(), m.ID); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -249,11 +249,18 @@ func (s *Server) memoryAssetsUpdate(add bool) http.HandlerFunc {
 				own[asset.ID] = true
 			}
 		}
+		results := []BulkIDResponse{}
+		s.albumMu.Lock()
+		m, err = s.app.Store.Memories().Get(r.Context(), m.ID)
+		if err != nil {
+			s.albumMu.Unlock()
+			s.storeError(w, err)
+			return
+		}
 		member := map[string]bool{}
 		for _, id := range m.AssetIDs {
 			member[id] = true
 		}
-		results := []BulkIDResponse{}
 		for _, id := range req.IDs {
 			res := BulkIDResponse{ID: id, Success: true}
 			switch {
@@ -281,8 +288,10 @@ func (s *Server) memoryAssetsUpdate(add bool) http.HandlerFunc {
 			results = append(results, res)
 		}
 		m.UpdatedAt = time.Now().UTC()
-		if err := s.app.Store.Memories().Update(r.Context(), m); err != nil {
-			storeError(w, err)
+		err = s.app.Store.Memories().Update(r.Context(), m)
+		s.albumMu.Unlock()
+		if err != nil {
+			s.storeError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, results)
@@ -296,7 +305,7 @@ func (s *Server) memoriesStatistics(w http.ResponseWriter, r *http.Request) {
 	}
 	memories, err := s.app.Store.Memories().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"total": len(memories)})

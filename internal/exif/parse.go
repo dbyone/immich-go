@@ -300,19 +300,19 @@ func (t *tiff) eachEntry(off int, fn func(tag, typ uint16, count uint32, val []b
 		if !ok {
 			continue
 		}
-		total := size * int(count)
-		if total > len(t.b) { // cap runaway counts
+		total := int64(size) * int64(count) // int64: count can be hostile
+		if total < 0 || total > int64(len(t.b)) {
 			continue
 		}
 		var val []byte
 		if total <= 4 {
-			val = t.b[e+8 : e+8+total]
+			val = t.b[e+8 : e+8+int(total)]
 		} else {
-			voff := int(t.u32(e + 8))
-			if voff <= 0 || voff+total > len(t.b) {
+			voff := int64(t.u32(e + 8))
+			if voff <= 0 || voff+total > int64(len(t.b)) {
 				continue
 			}
-			val = t.b[voff : voff+total]
+			val = t.b[int(voff) : int(voff)+int(total)]
 		}
 		fn(tag, typ, count, val)
 	}

@@ -266,3 +266,24 @@ func TestListForOwnerIsolation(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+func TestSetIfAbsentClaimsOnce(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "immich.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	first, err := s.Metadata().SetIfAbsent(ctx, "bootstrap", "1")
+	if err != nil || !first {
+		t.Fatalf("first claim must win: %v %v", first, err)
+	}
+	second, err := s.Metadata().SetIfAbsent(ctx, "bootstrap", "2")
+	if err != nil || second {
+		t.Fatalf("second claim must lose: %v %v", second, err)
+	}
+	if v, ok, _ := s.Metadata().Get(ctx, "bootstrap"); !ok || v != "1" {
+		t.Fatalf("value must stay from first claim: %q %v", v, ok)
+	}
+}

@@ -98,6 +98,7 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		Vectors: vectors,
 		db:      db,
 	}
+	a.Auth.SetSessionTTL(cfg.SessionTTL)
 	a.registerJobs()
 	return a, nil
 }
@@ -111,6 +112,16 @@ func storeKind(st store.Store) string {
 
 // Close releases background resources.
 func (a *App) Close() {
+	a.clusterMu.Lock()
+	if a.clusterTimer != nil {
+		a.clusterTimer.Stop()
+	}
+	a.clusterMu.Unlock()
+	a.dedupMu.Lock()
+	if a.dedupTimer != nil {
+		a.dedupTimer.Stop()
+	}
+	a.dedupMu.Unlock()
 	a.Jobs.Stop()
 	a.ML.Teardown()
 	_ = a.Vectors.Close()
@@ -145,6 +156,18 @@ type assetJobData struct {
 // AssetJobData is the canonical payload for asset-scoped jobs.
 func AssetJobData(assetID string) map[string]string {
 	return map[string]string{"assetId": assetID}
+}
+
+// mergeAssetUpdate re-reads the asset and applies mutate before writing,
+// so long-running background jobs never clobber concurrent user edits
+// (favorites, archive state, ...) with a stale row snapshot.
+func (a *App) mergeAssetUpdate(ctx context.Context, id string, mutate func(*domain.Asset)) error {
+	asset, err := a.Store.Assets().Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	mutate(asset)
+	return a.Store.Assets().Update(ctx, asset)
 }
 
 func (a *App) handleExtractMetadata(ctx context.Context, _ string, data any) error {
@@ -239,7 +262,15 @@ func (a *App) handleExtractMetadata(ctx context.Context, _ string, data any) err
 		exifRow.ExifWidth, exifRow.ExifHeight = &ww, &hh
 	}
 	asset.Exif = exifRow
-	if err := a.Store.Assets().Update(ctx, asset); err != nil {
+	finalAsset := asset
+	if err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) {
+		fresh.Width, fresh.Height = finalAsset.Width, finalAsset.Height
+		fresh.Exif = finalAsset.Exif
+		if finalAsset.Duration != nil {
+			fresh.Duration = finalAsset.Duration
+		}
+		fresh.LocalDateTime = finalAsset.LocalDateTime
+	}); err != nil {
 		return err
 	}
 
@@ -313,9 +344,10 @@ func (a *App) generateVideoPoster(ctx context.Context, asset *domain.Asset) erro
 	if err != nil {
 		return err
 	}
-	asset.ThumbnailPath = thumb
-	asset.PreviewPath = preview
-	return a.Store.Assets().Update(ctx, asset)
+	return a.mergeAssetUpdate(ctx, asset.ID, func(fresh *domain.Asset) {
+		fresh.ThumbnailPath = thumb
+		fresh.PreviewPath = preview
+	})
 }
 
 func (a *App) handleSmartSearch(ctx context.Context, _ string, data any) error {
@@ -331,8 +363,9 @@ func (a *App) handleSmartSearch(ctx context.Context, _ string, data any) error {
 	if err != nil {
 		return fmt.Errorf("smart search embedding: %w", err)
 	}
-	asset.SmartEmbedding = vec
-	if err := a.Store.Assets().Update(ctx, asset); err != nil {
+	if err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) {
+		fresh.SmartEmbedding = vec
+	}); err != nil {
 		return err
 	}
 	// Persist the embedding in the DuckDB vector store (smart_search).
@@ -379,12 +412,19 @@ func (a *App) handleDetectFaces(ctx context.Context, _ string, data any) error {
 			})
 		}
 	}
-	asset.Faces = faces
-	if err := a.Store.Assets().Update(ctx, asset); err != nil {
+	finalFaces := faces
+	if err := a.mergeAssetUpdate(ctx, id, func(fresh *domain.Asset) {
+		fresh.Faces = finalFaces
+	}); err != nil {
 		return err
 	}
-	// Persist face embeddings for clustering (face_search).
-	if err := a.Vectors.UpsertFaces(ctx, asset.OwnerID, asset.ID, rows); err != nil {
+	// Persist face embeddings for clustering (face_search). A re-detect
+	// yielding zero faces must clear the previous rows, not leave them.
+	if len(rows) == 0 {
+		if err := a.Vectors.DeleteFaces(ctx, asset.ID); err != nil {
+			return fmt.Errorf("face vector cleanup: %w", err)
+		}
+	} else if err := a.Vectors.UpsertFaces(ctx, asset.OwnerID, asset.ID, rows); err != nil {
 		return fmt.Errorf("face vector upsert: %w", err)
 	}
 	if a.Cfg.MachineLearning.FacialRecognition.Enabled {
@@ -426,34 +466,54 @@ func (a *App) handleDuplicateDetection(ctx context.Context, _ string, _ any) err
 	if err != nil {
 		return err
 	}
-	cleared := map[string]bool{}
 	for _, u := range users {
 		groups, err := a.Vectors.DetectDuplicates(ctx, u.ID, a.Cfg.MachineLearning.DuplicateDetection.MaxDistance)
 		if err != nil {
 			return fmt.Errorf("duplicate detection for user %s: %w", u.ID, err)
 		}
+		// Only live assets may (re)form a group: pairs the user already
+		// resolved keep a trashed member and must not resurrect, and
+		// groups below two live members are dissolved outright.
+		live := map[string]bool{}
+		assets, _ := a.Store.Assets().ListForOwner(ctx, u.ID)
+		for _, asset := range assets {
+			live[asset.ID] = asset.DeletedAt == nil
+		}
 		grouped := map[string]string{} // assetID -> groupID
 		for _, members := range groups {
-			groupID := crypto.NewUUID()
+			var liveMembers []string
 			for _, id := range members {
+				if live[id] {
+					liveMembers = append(liveMembers, id)
+				}
+			}
+			if len(liveMembers) < 2 {
+				continue
+			}
+			groupID := crypto.NewUUID()
+			for _, id := range liveMembers {
 				grouped[id] = groupID
 			}
 		}
-		assets, _ := a.Store.Assets().ListForOwner(ctx, u.ID)
 		for _, asset := range assets {
 			want, inGroup := grouped[asset.ID]
-			switch {
-			case inGroup && (asset.DuplicateID == nil || *asset.DuplicateID != want):
-				asset.DuplicateID = &want
-				_ = a.Store.Assets().Update(ctx, asset)
-			case !inGroup && !cleared[asset.ID] && asset.DuplicateID != nil:
-				asset.DuplicateID = nil
-				_ = a.Store.Assets().Update(ctx, asset)
+			need := (inGroup && (asset.DuplicateID == nil || *asset.DuplicateID != want)) ||
+				(!inGroup && asset.DuplicateID != nil)
+			if !need {
+				continue
 			}
-			cleared[asset.ID] = true
+			assetID := asset.ID
+			_ = a.mergeAssetUpdate(ctx, assetID, func(fresh *domain.Asset) {
+				if inGroup {
+					id := want
+					fresh.DuplicateID = &id
+				} else {
+					fresh.DuplicateID = nil
+				}
+			})
 		}
-		if len(groups) > 0 {
-			a.Log.Info("duplicate detection complete", "user", u.ID, "groups", len(groups))
+		if len(grouped) > 0 {
+			a.Log.Info("duplicate detection complete", "user", u.ID, "groups", len(grouped))
 		}
 	}
 	return nil

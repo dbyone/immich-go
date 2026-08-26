@@ -85,7 +85,7 @@ func (s *Server) createPerson(w http.ResponseWriter, r *http.Request) {
 		p.BirthDate = *req.BirthDate
 	}
 	if err := s.app.Vectors.CreatePerson(r.Context(), p); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, personDetail(p))
@@ -135,7 +135,7 @@ func (s *Server) updatePerson(w http.ResponseWriter, r *http.Request) {
 		p.Name = *req.Name
 	}
 	if err := s.app.Vectors.UpdatePerson(r.Context(), p); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, personDetail(p))
@@ -147,7 +147,7 @@ func (s *Server) deletePerson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.app.Vectors.DeletePersons(r.Context(), p.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -279,6 +279,18 @@ func (s *Server) reassignFaces(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// Every destination person must exist and belong to the caller —
+	// otherwise faces could be attached to another user's person.
+	for _, d := range req.Data {
+		if d.PersonID == nil || *d.PersonID == "" {
+			continue
+		}
+		dest, err := s.app.Vectors.GetPerson(r.Context(), *d.PersonID)
+		if err != nil || dest.OwnerID != p.OwnerID {
+			writeError(w, http.StatusBadRequest, "Invalid destination person")
+			return
+		}
+	}
 	entries := make([]vectordb.ReassignEntry, 0, len(req.Data))
 	for _, d := range req.Data {
 		dest := ""
@@ -288,7 +300,7 @@ func (s *Server) reassignFaces(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, vectordb.ReassignEntry{AssetID: d.AssetID, PersonID: dest})
 	}
 	if err := s.app.Vectors.ReassignFaces(r.Context(), p.ID, entries); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	updated, err := s.app.Vectors.GetPerson(r.Context(), p.ID)
@@ -305,7 +317,7 @@ func (s *Server) personStatistics(w http.ResponseWriter, r *http.Request) {
 	}
 	assets, err := s.app.Vectors.PersonStats(r.Context(), p.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"assets": assets})
@@ -330,7 +342,7 @@ func (s *Server) personThumbnail(w http.ResponseWriter, r *http.Request) {
 	}
 	jpegData, err := media.CropFace(asset.OriginalPath, face.Box, media.ThumbnailMax)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")

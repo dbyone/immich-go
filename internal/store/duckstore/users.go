@@ -78,10 +78,40 @@ func (s *userStore) Delete(ctx context.Context, id string) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM api_keys WHERE user_id = ?`, id); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sync_acks WHERE user_id = ?`, id); err != nil {
+			return err
+		}
+		// Owned albums take their join rows with them.
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM album_assets WHERE album_id IN (SELECT id FROM albums WHERE owner_id = ?)`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM album_users WHERE album_id IN (SELECT id FROM albums WHERE owner_id = ?)`, id); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM albums WHERE owner_id = ?`, id); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM album_users WHERE user_id = ?`, id); err != nil {
+			return err
+		}
+		// Memories and their assets.
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM memory_assets WHERE memory_id IN (SELECT id FROM memories WHERE owner_id = ?)`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM memories WHERE owner_id = ?`, id); err != nil {
+			return err
+		}
+		// Assets: dependent rows first, then the rows themselves.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM album_assets WHERE asset_id IN (SELECT id FROM assets WHERE owner_id = ?)`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM memory_assets WHERE asset_id IN (SELECT id FROM assets WHERE owner_id = ?)`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM asset_exifs WHERE asset_id IN (SELECT id FROM assets WHERE owner_id = ?)`, id); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM assets WHERE owner_id = ?`, id); err != nil {

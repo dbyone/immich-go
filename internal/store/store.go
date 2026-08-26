@@ -54,6 +54,9 @@ type AssetStore interface {
 	// GetByChecksum finds a live (non-trashed) asset of the owner with a
 	// matching SHA-1 checksum — the upload de-duplication check.
 	GetByChecksum(ctx context.Context, ownerID string, checksum []byte) (*domain.Asset, error)
+	// GetByChecksumAny also matches trashed assets so the bulk upload
+	// check can report them (upstream isTrashed semantics).
+	GetByChecksumAny(ctx context.Context, ownerID string, checksum []byte) (*domain.Asset, error)
 	List(ctx context.Context) ([]*domain.Asset, error)
 	ListForOwner(ctx context.Context, ownerID string) ([]*domain.Asset, error)
 }
@@ -84,6 +87,8 @@ type SyncAckStore interface {
 type MetadataStore interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 	Set(ctx context.Context, key, value string) error
+	// SetIfAbsent atomically claims a key; the second caller gets false.
+	SetIfAbsent(ctx context.Context, key, value string) (bool, error)
 }
 
 type Store interface {

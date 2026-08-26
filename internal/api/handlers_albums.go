@@ -77,6 +77,24 @@ func (s *Server) canSeeAlbum(r *http.Request, al *domain.Album) bool {
 	return false
 }
 
+// canEditAlbum: the owner or an editor may mutate album contents;
+// viewers are read-only (upstream AlbumUserRole semantics).
+func (s *Server) canEditAlbum(r *http.Request, al *domain.Album) bool {
+	a := auth.FromRequest(r)
+	if a == nil {
+		return false
+	}
+	if al.OwnerID == a.User.ID {
+		return true
+	}
+	for _, u := range al.Users {
+		if u.UserID == a.User.ID && u.Role != domain.AlbumRoleViewer {
+			return true
+		}
+	}
+	return false
+}
+
 // --- albums ---
 
 func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +104,7 @@ func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 	}
 	albums, err := s.app.Store.Albums().List(r.Context())
 	if err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	out := []AlbumResponse{}
@@ -155,7 +173,7 @@ func (s *Server) createAlbum(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.app.Store.Albums().Create(r.Context(), al); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, s.albumResponse(r, al, false))
@@ -210,7 +228,7 @@ func (s *Server) updateAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 	al.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.Albums().Update(r.Context(), al); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.albumResponse(r, al, false))
@@ -227,7 +245,7 @@ func (s *Server) deleteAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.app.Store.Albums().Delete(r.Context(), al.ID); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -247,6 +265,10 @@ func (s *Server) addAssetsToAlbum(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Not found")
 		return
 	}
+	if !s.canEditAlbum(r, al) {
+		writeError(w, http.StatusForbidden, "Viewers cannot modify this album")
+		return
+	}
 	var req addAssetsRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -259,6 +281,13 @@ func (s *Server) addAssetsToAlbum(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	results := []BulkIDResponse{}
+	s.albumMu.Lock()
+	al, err = s.app.Store.Albums().Get(r.Context(), al.ID)
+	if err != nil {
+		s.albumMu.Unlock()
+		s.storeError(w, err)
+		return
+	}
 	for _, id := range req.AssetIDs {
 		res := BulkIDResponse{ID: id, Success: true}
 		switch {
@@ -274,8 +303,10 @@ func (s *Server) addAssetsToAlbum(w http.ResponseWriter, r *http.Request) {
 		results = append(results, res)
 	}
 	al.UpdatedAt = time.Now().UTC()
-	if err := s.app.Store.Albums().Update(r.Context(), al); err != nil {
-		storeError(w, err)
+	err = s.app.Store.Albums().Update(r.Context(), al)
+	s.albumMu.Unlock()
+	if err != nil {
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
@@ -291,6 +322,10 @@ func (s *Server) removeAssetsFromAlbum(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Not found")
 		return
 	}
+	if !s.canEditAlbum(r, al) {
+		writeError(w, http.StatusForbidden, "Viewers cannot modify this album")
+		return
+	}
 	var req addAssetsRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -301,6 +336,13 @@ func (s *Server) removeAssetsFromAlbum(w http.ResponseWriter, r *http.Request) {
 		remove[id] = true
 	}
 	results := []BulkIDResponse{}
+	s.albumMu.Lock()
+	al, err = s.app.Store.Albums().Get(r.Context(), al.ID)
+	if err != nil {
+		s.albumMu.Unlock()
+		s.storeError(w, err)
+		return
+	}
 	for _, id := range req.AssetIDs {
 		res := BulkIDResponse{ID: id, Success: true}
 		if !al.HasAsset(id) {
@@ -317,8 +359,10 @@ func (s *Server) removeAssetsFromAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 	al.AssetIDs = kept
 	al.UpdatedAt = time.Now().UTC()
-	if err := s.app.Store.Albums().Update(r.Context(), al); err != nil {
-		storeError(w, err)
+	err = s.app.Store.Albums().Update(r.Context(), al)
+	s.albumMu.Unlock()
+	if err != nil {
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
@@ -355,17 +399,29 @@ func (s *Server) addAssetsToAlbums(w http.ResponseWriter, r *http.Request) {
 		if err != nil || !s.canSeeAlbum(r, al) {
 			res.Success = false
 			res.Error = "not_found"
+		} else if !s.canEditAlbum(r, al) {
+			res.Success = false
+			res.Error = "no_permission"
 		} else {
-			for _, assetID := range req.AssetIDs {
-				if !al.HasAsset(assetID) && own[assetID] {
-					al.AssetIDs = append(al.AssetIDs, assetID)
-				}
-			}
-			al.UpdatedAt = time.Now().UTC()
-			if err := s.app.Store.Albums().Update(r.Context(), al); err != nil {
+			s.albumMu.Lock()
+			al, err = s.app.Store.Albums().Get(r.Context(), albumID)
+			if err != nil {
+				s.albumMu.Unlock()
 				res.Success = false
 				res.Error = "unknown"
+			} else {
+				for _, assetID := range req.AssetIDs {
+					if !al.HasAsset(assetID) && own[assetID] {
+						al.AssetIDs = append(al.AssetIDs, assetID)
+					}
+				}
+				al.UpdatedAt = time.Now().UTC()
+				if err := s.app.Store.Albums().Update(r.Context(), al); err != nil {
+					res.Success = false
+					res.Error = "unknown"
+				}
 			}
+			s.albumMu.Unlock()
 		}
 		results = append(results, res)
 	}
@@ -415,7 +471,7 @@ func (s *Server) addUsersToAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 	al.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.Albums().Update(r.Context(), al); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.albumResponse(r, al, false))
@@ -441,7 +497,7 @@ func (s *Server) removeUserFromAlbum(w http.ResponseWriter, r *http.Request) {
 	al.Users = kept
 	al.UpdatedAt = time.Now().UTC()
 	if err := s.app.Store.Albums().Update(r.Context(), al); err != nil {
-		storeError(w, err)
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.albumResponse(r, al, false))

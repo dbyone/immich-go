@@ -79,7 +79,8 @@ type Config struct {
 	ClusterDebounce time.Duration
 
 	// Session token lifetime (official server: none by default — sessions
-	// live until logged out; 400-day cookie maxAge).
+	// live until logged out; 400-day cookie maxAge). 0 disables expiry.
+	// IMMICH_SESSION_TTL_HOURS overrides.
 	SessionTTL time.Duration
 
 	MachineLearning MachineLearning
@@ -128,6 +129,9 @@ func Load() *Config {
 		ClusterDebounce: time.Duration(envInt("IMMICH_CLUSTER_DEBOUNCE_MS", 5000)) * time.Millisecond,
 		Store:           strings.ToLower(env("IMMICH_STORE", "duckdb")),
 		UploadLimitMB:   envInt("IMMICH_UPLOAD_LIMIT_MB", 8192),
+	}
+	if hours := envInt("IMMICH_SESSION_TTL_HOURS", 9600); hours > 0 {
+		c.SessionTTL = time.Duration(hours) * time.Hour
 	}
 	c.DuckDBPath = env("IMMICH_DUCKDB", "")
 	if c.DuckDBPath == "" {

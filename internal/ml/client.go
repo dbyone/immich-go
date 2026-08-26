@@ -373,7 +373,11 @@ func (c *Client) predict(ctx context.Context, image []byte, text string, req *Pi
 		}
 		lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, resp.Status)
 		c.logger.Warn("machine learning request failed", "url", base, "status", resp.StatusCode)
-		c.setHealthy(base, false)
+		if resp.StatusCode >= 500 {
+			// 4xx means we sent a bad request (e.g. unknown model); the
+			// server itself may still be healthy for other traffic.
+			c.setHealthy(base, false)
+		}
 	}
 	return nil, fmt.Errorf("machine learning request failed for all URLs: %w", lastErr)
 }

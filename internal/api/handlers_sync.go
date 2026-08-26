@@ -25,7 +25,7 @@ func (s *Server) getSyncAck(w http.ResponseWriter, r *http.Request) {
 	}
 	acks, err := s.app.Store.SyncAcks().List(r.Context(), a.User.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	out := make([]syncAckEntry, 0, len(acks))
@@ -56,7 +56,7 @@ func (s *Server) sendSyncAck(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, domain.SyncAck{Type: parts[0], Ack: ack})
 	}
 	if err := s.app.Store.SyncAcks().Put(r.Context(), a.User.ID, entries); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -75,7 +75,7 @@ func (s *Server) deleteSyncAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.app.Store.SyncAcks().DeleteTypes(r.Context(), a.User.ID, req.Types); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeInternal(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
