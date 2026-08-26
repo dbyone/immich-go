@@ -1,0 +1,31 @@
+services:
+  immich-go:
+    build: .
+    container_name: immich_go
+    restart: unless-stopped
+    ports:
+      - "2283:2283"
+    environment:
+      IMMICH_PORT: "2283"
+      IMMICH_MEDIA_LOCATION: /data
+      IMMICH_MACHINE_LEARNING_ENABLED: "true"
+      IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+    volumes:
+      - immich-go-data:/data
+    depends_on:
+      immich-machine-learning:
+        condition: service_started
+
+  # 官方机器学习服务，immich-go 通过 /ping 与 /predict 与其交互（接口兼容）
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    container_name: immich_ml
+    restart: unless-stopped
+    volumes:
+      - immich-ml-cache:/cache
+    environment:
+      MPLCONFIGDIR: /cache/mplconfig
+
+volumes:
+  immich-go-data:
+  immich-ml-cache:

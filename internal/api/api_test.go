@@ -1,0 +1,355 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"io"
+	"log/slog"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"immich-go/internal/app"
+	"immich-go/internal/config"
+	"immich-go/internal/store/memory"
+)
+
+// fakeML mimics the immich-machine-learning service: /ping and /predict
+// returning a fixed embedding for both image and text inputs.
+func fakeML(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ping"):
+			io.WriteString(w, "pong")
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/predict"):
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"clip":"[0.5,0.5,0.7071]","facial-recognition":[],"imageHeight":64,"imageWidth":64}`)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func testJPEG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 4), G: uint8(y * 4), B: 128, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func newTestServer(t *testing.T) http.Handler {
+	t.Helper()
+	mlSrv := fakeML(t)
+	cfg := config.Load()
+	cfg.MediaLocation = filepath.Join(t.TempDir(), "media")
+	cfg.MachineLearning.URLs = []string{mlSrv.URL}
+	cfg.MachineLearning.AvailabilityChecks.Enabled = false
+
+	a, err := app.New(cfg, memory.New(), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.Jobs.Start(ctx)
+	t.Cleanup(a.Close)
+	t.Cleanup(cancel)
+	return New(a).Router()
+}
+
+// doJSON performs a JSON request and returns the status plus decoded body
+// (object or array).
+func doJSON(t *testing.T, h http.Handler, method, path, token string, body any) (int, any) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	data, _ := io.ReadAll(rec.Body)
+	var out any
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &out); err != nil {
+			t.Fatalf("non-JSON response %s: %s", rec.Result().Status, data)
+		}
+	}
+	return rec.Code, out
+}
+
+func asMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("expected JSON object, got %#v", v)
+	}
+	return m
+}
+
+func TestEndToEndFlow(t *testing.T) {
+	h := newTestServer(t)
+
+	// Public endpoints.
+	code, body := doJSON(t, h, http.MethodGet, "/api/server/ping", "", nil)
+	if code != 200 || asMap(t, body)["res"] != "pong" {
+		t.Fatalf("ping: %d %v", code, body)
+	}
+	code, _ = doJSON(t, h, http.MethodGet, "/api/server/version", "", nil)
+	if code != 200 {
+		t.Fatalf("version: %d", code)
+	}
+
+	// Bootstrap admin + login.
+	code, body = doJSON(t, h, http.MethodPost, "/api/auth/admin-sign-up", "", map[string]any{
+		"name": "Admin", "email": "admin@example.com", "password": "password123",
+	})
+	if code != 201 {
+		t.Fatalf("admin-sign-up: %d %v", code, body)
+	}
+	code, body = doJSON(t, h, http.MethodPost, "/api/auth/login", "", map[string]any{
+		"email": "admin@example.com", "password": "password123",
+	})
+	if code != 201 {
+		t.Fatalf("login: %d %v", code, body)
+	}
+	token, _ := asMap(t, body)["accessToken"].(string)
+	if token == "" {
+		t.Fatal("login returned no accessToken")
+	}
+
+	// Wrong password is rejected.
+	code, _ = doJSON(t, h, http.MethodPost, "/api/auth/login", "", map[string]any{
+		"email": "admin@example.com", "password": "wrong",
+	})
+	if code != 401 {
+		t.Fatalf("wrong password should 401, got %d", code)
+	}
+
+	// Token validation and cookie auth both work.
+	code, body = doJSON(t, h, http.MethodPost, "/api/auth/validateToken", token, nil)
+	if code != 200 || asMap(t, body)["authStatus"] != true {
+		t.Fatalf("validateToken: %d %v", code, body)
+	}
+	cookieReq := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
+	cookieReq.AddCookie(&http.Cookie{Name: "immich_access_token", Value: token})
+	cookieRec := httptest.NewRecorder()
+	h.ServeHTTP(cookieRec, cookieReq)
+	if cookieRec.Code != 200 {
+		t.Fatalf("cookie auth failed: %d", cookieRec.Code)
+	}
+
+	// Upload an image.
+	jpg := testJPEG(t)
+	upload := func() (int, string) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, _ := mw.CreateFormFile("assetData", "photo.jpg")
+		fw.Write(jpg)
+		mw.WriteField("fileCreatedAt", "2026-01-15T10:00:00.000Z")
+		mw.WriteField("fileModifiedAt", "2026-01-15T10:00:00.000Z")
+		mw.Close()
+		req := httptest.NewRequest(http.MethodPost, "/api/assets", &buf)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		out := map[string]any{}
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, fmt.Sprint(out["status"])
+	}
+	code, status := upload()
+	if code != 201 || status != "created" {
+		t.Fatalf("upload: %d %s", code, status)
+	}
+
+	// Duplicate upload is detected via SHA-1 checksum.
+	code, status = upload()
+	if code != 201 || status != "duplicate" {
+		t.Fatalf("duplicate upload: %d %s", code, status)
+	}
+
+	// The metadata job eventually fills dimensions; smart search needs the
+	// CLIP embedding from the background pipeline.
+	deadline := time.Now().Add(15 * time.Second)
+	var assetID string
+	for time.Now().Before(deadline) {
+		_, page := doJSON(t, h, http.MethodPost, "/api/search/metadata", token, map[string]any{"size": 10})
+		list, _ := asMap(t, page)["assets"].([]any)
+		if len(list) > 0 {
+			first, _ := list[0].(map[string]any)
+			if first["width"] != nil {
+				assetID, _ = first["id"].(string)
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if assetID == "" {
+		t.Fatal("metadata extraction never populated asset dimensions")
+	}
+
+	// Thumbnail endpoint serves the generated JPEG.
+	thumbReq := httptest.NewRequest(http.MethodGet, "/api/assets/"+assetID+"/thumbnail", nil)
+	thumbReq.Header.Set("Authorization", "Bearer "+token)
+	thumbRec := httptest.NewRecorder()
+	h.ServeHTTP(thumbRec, thumbReq)
+	if thumbRec.Code != 200 {
+		t.Fatalf("thumbnail: %d", thumbRec.Code)
+	}
+
+	// Smart search ranks via the machine-learning service.
+	code, body = doJSON(t, h, http.MethodPost, "/api/search/smart", token, map[string]any{"query": "gradient"})
+	if code != 200 {
+		t.Fatalf("smart search: %d %v", code, body)
+	}
+	smartAssets, _ := asMap(t, body)["assets"].([]any)
+	if len(smartAssets) != 1 {
+		t.Fatalf("smart search should return 1 asset, got %v", body)
+	}
+
+	// Timeline buckets (monthly, columnar bucket payload).
+	code, body = doJSON(t, h, http.MethodGet, "/api/timeline/buckets", token, nil)
+	if code != 200 {
+		t.Fatalf("buckets: %d", code)
+	}
+	buckets, _ := body.([]any)
+	if len(buckets) != 1 {
+		t.Fatalf("expected 1 bucket, got %v", body)
+	}
+	bucket, _ := buckets[0].(map[string]any)
+	bucketReq := httptest.NewRequest(http.MethodGet, "/api/timeline/bucket?timeBucket="+fmt.Sprint(bucket["timeBucket"]), nil)
+	bucketReq.Header.Set("Authorization", "Bearer "+token)
+	bucketRec := httptest.NewRecorder()
+	h.ServeHTTP(bucketRec, bucketReq)
+	if bucketRec.Code != 200 {
+		t.Fatalf("bucket content: %d", bucketRec.Code)
+	}
+	columnar := map[string]any{}
+	json.Unmarshal(bucketRec.Body.Bytes(), &columnar)
+	ids, _ := columnar["id"].([]any)
+	if len(ids) != 1 {
+		t.Fatalf("columnar bucket should hold 1 asset: %v", columnar)
+	}
+
+	// Albums.
+	code, body = doJSON(t, h, http.MethodPost, "/api/albums", token, map[string]any{
+		"albumName": "Trip", "assetIds": []string{assetID},
+	})
+	if code != 201 {
+		t.Fatalf("create album: %d %v", code, body)
+	}
+	albumID, _ := asMap(t, body)["id"].(string)
+	code, body = doJSON(t, h, http.MethodGet, "/api/albums/"+albumID, token, nil)
+	if code != 200 || asMap(t, body)["assetCount"] != float64(1) {
+		t.Fatalf("album detail: %d %v", code, body)
+	}
+
+	// API keys: create, then authenticate with x-api-key.
+	code, body = doJSON(t, h, http.MethodPost, "/api/api-keys", token, map[string]any{
+		"name": "ci", "permissions": []string{"all"},
+	})
+	if code != 201 {
+		t.Fatalf("create api key: %d %v", code, body)
+	}
+	secret, _ := asMap(t, body)["secret"].(string)
+	keyReq := httptest.NewRequest(http.MethodGet, "/api/server/about", nil)
+	keyReq.Header.Set("x-api-key", secret)
+	keyRec := httptest.NewRecorder()
+	h.ServeHTTP(keyRec, keyReq)
+	if keyRec.Code != 200 {
+		t.Fatalf("api key auth: %d %s", keyRec.Code, keyRec.Body.String())
+	}
+
+	// Jobs overview exposes the 19 Immich queues.
+	code, body = doJSON(t, h, http.MethodGet, "/api/jobs", token, nil)
+	if code != 200 {
+		t.Fatalf("jobs: %d", code)
+	}
+	jobsBody := asMap(t, body)
+	if len(jobsBody) != 19 {
+		t.Fatalf("expected 19 queues, got %d", len(jobsBody))
+	}
+	if q, ok := jobsBody["metadataExtraction"].(map[string]any); ok {
+		counts, _ := q["jobCounts"].(map[string]any)
+		if completed, _ := counts["completed"].(float64); completed < 1 {
+			t.Fatalf("metadataExtraction should have completed jobs: %v", q)
+		}
+	} else {
+		t.Fatal("metadataExtraction queue missing")
+	}
+}
+
+func TestUnauthorizedAndPermissions(t *testing.T) {
+	h := newTestServer(t)
+
+	code, _ := doJSON(t, h, http.MethodGet, "/api/users/me", "bad-token", nil)
+	if code != 401 {
+		t.Fatalf("bad token should 401, got %d", code)
+	}
+	code, _ = doJSON(t, h, http.MethodGet, "/api/timeline/buckets", "", nil)
+	if code != 401 {
+		t.Fatalf("anonymous should 401, got %d", code)
+	}
+
+	// Create a user + limited API key; scoped permission enforcement.
+	_, _ = doJSON(t, h, http.MethodPost, "/api/auth/admin-sign-up", "", map[string]any{
+		"name": "Admin", "email": "a@b.c", "password": "password123",
+	})
+	_, body := doJSON(t, h, http.MethodPost, "/api/auth/login", "", map[string]any{
+		"email": "a@b.c", "password": "password123",
+	})
+	token, _ := asMap(t, body)["accessToken"].(string)
+
+	_, body = doJSON(t, h, http.MethodPost, "/api/api-keys", token, map[string]any{
+		"name": "limited", "permissions": []string{"asset.read"},
+	})
+	secret, _ := asMap(t, body)["secret"].(string)
+
+	scopedReq := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
+	scopedReq.Header.Set("x-api-key", secret)
+	scopedRec := httptest.NewRecorder()
+	h.ServeHTTP(scopedRec, scopedReq)
+	if scopedRec.Code != 200 {
+		t.Fatalf("scoped key should read users/me, got %d", scopedRec.Code)
+	}
+
+	albumReq := httptest.NewRequest(http.MethodPost, "/api/albums", strings.NewReader(`{"albumName":"X"}`))
+	albumReq.Header.Set("Content-Type", "application/json")
+	albumReq.Header.Set("x-api-key", secret)
+	albumRec := httptest.NewRecorder()
+	h.ServeHTTP(albumRec, albumReq)
+	if albumRec.Code != 403 {
+		t.Fatalf("asset.read key must not create albums, got %d: %s", albumRec.Code, albumRec.Body.String())
+	}
+}
