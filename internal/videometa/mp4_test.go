@@ -118,3 +118,21 @@ func boxForTest(typ string, payload []byte) []byte {
 	copy(box[8:], payload)
 	return box
 }
+
+// TestMaliciousSTSDNoPanic pins the crash-chain fix: an stsd entry size
+// inside the former guard/slice mismatch window (guard used 8+, slice
+// used 12+) must degrade to codec-only instead of panicking.
+func TestMaliciousSTSDNoPanic(t *testing.T) {
+	hostile := make([]byte, 64)
+	// version/flags + entry count, then the entry: size=50 falls in
+	// (len-12, len-8] = (52, 56] — inside the panic window.
+	hostile[11] = 1 // entry count
+	hostile[8], hostile[9], hostile[10] = 0, 0, 0
+	binary.BigEndian.PutUint32(hostile[8:12], 50)
+	copy(hostile[12:16], "avc1")
+
+	codec, w, h := parseSTSD(hostile)
+	if codec != "h264" || w != 0 || h != 0 {
+		t.Fatalf("hostile stsd should degrade to codec-only: %q %d %d", codec, w, h)
+	}
+}

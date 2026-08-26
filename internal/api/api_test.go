@@ -63,6 +63,22 @@ func testJPEG(t *testing.T, seed int) []byte {
 
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
+	h, _ := newTestServerApp(t, nil)
+	return h
+}
+
+// newTestServerCfg builds a test server, optionally tweaking the config
+// before the app wires up (e.g. shrinking the upload limit).
+func newTestServerCfg(t *testing.T, mutate func(*config.Config)) http.Handler {
+	t.Helper()
+	h, _ := newTestServerApp(t, mutate)
+	return h
+}
+
+// newTestServerApp additionally exposes the wired app for tests that
+// need to seed state directly (e.g. extra users).
+func newTestServerApp(t *testing.T, mutate func(*config.Config)) (http.Handler, *app.App) {
+	t.Helper()
 	mlSrv := fakeML(t)
 	cfg := config.Load()
 	cfg.MediaLocation = filepath.Join(t.TempDir(), "media")
@@ -72,6 +88,9 @@ func newTestServer(t *testing.T) http.Handler {
 	// store must be opened with the matching dimension.
 	cfg.VectorDim = 3
 	cfg.DuckDBPath = ":memory:"
+	if mutate != nil {
+		mutate(cfg)
+	}
 
 	// nil store → entity metadata persists to the same in-memory DuckDB
 	// database (the production default, minus the file).
@@ -83,7 +102,7 @@ func newTestServer(t *testing.T) http.Handler {
 	a.Jobs.Start(ctx)
 	t.Cleanup(a.Close)
 	t.Cleanup(cancel)
-	return New(a).Router()
+	return New(a).Router(), a
 }
 
 // doJSON performs a JSON request and returns the status plus decoded body

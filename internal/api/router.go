@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -31,6 +32,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(s.recoverer)
+	r.Use(s.bodyLimit)
 	r.Use(s.authGuard)
 
 	r.Route("/api", func(r chi.Router) {
@@ -172,6 +174,20 @@ func (s *Server) Router() http.Handler {
 }
 
 // --- middleware ---
+
+// jsonBodyLimit bounds non-multipart request bodies (uploads enforce
+// their own, larger cap), mirroring the upstream body-parser 10mb limit.
+const jsonBodyLimit = 10 << 20
+
+func (s *Server) bodyLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ct := r.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "multipart/") {
+			r.Body = http.MaxBytesReader(w, r.Body, jsonBodyLimit)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func (s *Server) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ package api
 import (
 	"archive/zip"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -218,7 +219,9 @@ func (s *Server) downloadArchive(w http.ResponseWriter, r *http.Request) {
 		name = "immich-download"
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`.zip"`)
+	// mime.FormatMediaType escapes the client-supplied name safely.
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name + ".zip"})
+	w.Header().Set("Content-Disposition", disposition)
 	w.WriteHeader(http.StatusOK)
 
 	zw := zip.NewWriter(w)

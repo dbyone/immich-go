@@ -369,7 +369,10 @@ func parseSTSD(b []byte) (codec string, width, height int) {
 	}
 	entrySize := int(binary.BigEndian.Uint32(b[8:12]))
 	fourcc := string(b[12:16])
-	if entrySize < 36 || 8+entrySize > len(b) {
+	// The entry starts at offset 8 but the box header (size+format) it
+	// reports is inclusive, so the slice base is 12; the bound check must
+	// match the slice, not the entry start.
+	if entrySize < 36 || 12+entrySize > len(b) {
 		return normalizeCodec(fourcc), 0, 0
 	}
 	entry := b[12 : 12+entrySize]

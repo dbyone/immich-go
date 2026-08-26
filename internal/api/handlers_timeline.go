@@ -15,13 +15,17 @@ func bucketKey(t time.Time) string {
 	return t.UTC().Format("2006-01") + "-01"
 }
 
-// filterAssets applies the shared timeline/search query filters.
+// filterAssets applies the shared timeline query filters. Without an
+// explicit visibility parameter only timeline-visible assets are
+// returned — archived, hidden and locked items stay off the main
+// timeline, matching the upstream contract.
 func (s *Server) filterAssets(r *http.Request, userID string) []*domain.Asset {
 	q := r.URL.Query()
 	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), userID)
 	withTrashed := q.Get("withDeleted") == "true"
 	isTrashed := q.Get("isTrashed") == "true"
 
+	visibility := q.Get("visibility")
 	var out []*domain.Asset
 	for _, a := range assets {
 		trashed := a.DeletedAt != nil
@@ -33,7 +37,11 @@ func (s *Server) filterAssets(r *http.Request, userID string) []*domain.Asset {
 		case trashed && !withTrashed:
 			continue
 		}
-		if v := q.Get("visibility"); v != "" && a.Visibility != v {
+		if visibility != "" {
+			if a.Visibility != visibility {
+				continue
+			}
+		} else if a.Visibility != domain.VisibilityTimeline {
 			continue
 		}
 		if v := q.Get("isFavorite"); v == "true" && !a.IsFavorite {
@@ -158,6 +166,11 @@ func (s *Server) emptyTrash(w http.ResponseWriter, r *http.Request) {
 	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	for _, asset := range assets {
 		if asset.DeletedAt != nil {
+			// Hard delete must clear the vector store too, or orphaned
+			// embeddings keep feeding smart search, duplicate detection
+			// and face clustering.
+			_ = s.app.Vectors.DeleteSmartSearch(r.Context(), asset.ID)
+			_ = s.app.Vectors.DeleteFaces(r.Context(), asset.ID)
 			_ = s.app.Store.Assets().Delete(r.Context(), asset.ID)
 			s.app.Storage.Remove(asset.OriginalPath)
 			s.app.Storage.Remove(asset.ThumbnailPath)

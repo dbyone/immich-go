@@ -142,6 +142,9 @@ func (s *assetStore) Delete(ctx context.Context, id string) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM album_assets WHERE asset_id = ?`, id); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM memory_assets WHERE asset_id = ?`, id); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM asset_exifs WHERE asset_id = ?`, id); err != nil {
 			return err
 		}

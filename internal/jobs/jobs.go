@@ -237,7 +237,7 @@ func (s *System) dispatch(ctx context.Context, q *queue, j *job) {
 	if h == nil {
 		err = fmt.Errorf("no handler for job %s", j.name)
 	} else {
-		err = h(ctx, j.name, j.data)
+		err = s.runHandler(ctx, h, j)
 	}
 
 	q.mu.Lock()
@@ -254,6 +254,18 @@ func (s *System) dispatch(ctx context.Context, q *queue, j *job) {
 	} else {
 		s.logger.Debug("job done", "job", j.name, "queue", q.name, "took", time.Since(start))
 	}
+}
+
+// runHandler isolates handler panics: a crashing handler must fail the
+// job, never the process (job goroutines run outside the HTTP recoverer).
+func (s *System) runHandler(ctx context.Context, h Handler, j *job) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			s.logger.Error("job handler panicked", "job", j.name, "panic", rec)
+			err = fmt.Errorf("panic in job %s: %v", j.name, rec)
+		}
+	}()
+	return h(ctx, j.name, j.data)
 }
 
 // Counts returns live statistics for /api/jobs.

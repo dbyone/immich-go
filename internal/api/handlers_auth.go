@@ -436,7 +436,9 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]SessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
-		out = append(out, sessionResponse(sess, sess.ID == a.Session.ID))
+		// API-key callers have no session; guard the comparison.
+		current := a.Session != nil && sess.ID == a.Session.ID
+		out = append(out, sessionResponse(sess, current))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

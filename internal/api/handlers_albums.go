@@ -340,6 +340,14 @@ func (s *Server) addAssetsToAlbums(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// Only the caller's own assets may be attached — the same rule the
+	// single-album endpoint enforces.
+	own := map[string]bool{}
+	if assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID); err == nil {
+		for _, asset := range assets {
+			own[asset.ID] = true
+		}
+	}
 	results := []AlbumsAddAssetsResponse{}
 	for _, albumID := range req.AlbumIDs {
 		res := AlbumsAddAssetsResponse{Success: true}
@@ -349,7 +357,7 @@ func (s *Server) addAssetsToAlbums(w http.ResponseWriter, r *http.Request) {
 			res.Error = "not_found"
 		} else {
 			for _, assetID := range req.AssetIDs {
-				if !al.HasAsset(assetID) {
+				if !al.HasAsset(assetID) && own[assetID] {
 					al.AssetIDs = append(al.AssetIDs, assetID)
 				}
 			}

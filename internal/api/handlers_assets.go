@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -58,6 +59,11 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce the configured upload cap before streaming anything to disk.
+	if limit := int64(s.app.Cfg.UploadLimitMB) * 1024 * 1024; limit > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+	}
+
 	mr, err := r.MultipartReader()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "multipart/form-data required")
@@ -112,7 +118,11 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 			path, sum, sumB64, _, err := s.app.Storage.SaveUpload(part, a.User.ID, id, fileExt)
 			part.Close()
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to store upload: "+err.Error())
+				if isBodyTooLarge(err) {
+					writeError(w, http.StatusRequestEntityTooLarge, "Upload exceeds the configured size limit")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "failed to store upload")
 				return
 			}
 			savedPath, savedSum, savedSumB64 = path, sum, sumB64
@@ -213,6 +223,12 @@ func extOf(name string) string {
 		return ".bin"
 	}
 	return strings.ToLower(name[idx:])
+}
+
+// isBodyTooLarge detects http.MaxBytesReader rejections.
+func isBodyTooLarge(err error) bool {
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
 }
 
 func (s *Server) getAsset(w http.ResponseWriter, r *http.Request) {
@@ -452,7 +468,13 @@ func (s *Server) bulkUpdateAssets(w http.ResponseWriter, r *http.Request) {
 			asset.IsFavorite = *req.IsFavorite
 		}
 		if req.Visibility != nil {
-			asset.Visibility = *req.Visibility
+			switch *req.Visibility {
+			case domain.VisibilityArchive, domain.VisibilityTimeline, domain.VisibilityHidden, domain.VisibilityLocked:
+				asset.Visibility = *req.Visibility
+			default:
+				writeError(w, http.StatusBadRequest, "invalid visibility")
+				return
+			}
 		}
 		asset.UpdatedAt = now
 		_ = s.app.Store.Assets().Update(r.Context(), asset)

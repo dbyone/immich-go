@@ -71,6 +71,10 @@ type Config struct {
 	// Store selects the entity backend: "duckdb" (default) or "memory".
 	Store string
 
+	// UploadLimitMB caps a single upload's request body
+	// (IMMICH_UPLOAD_LIMIT_MB); 0 disables the cap.
+	UploadLimitMB int
+
 	// Debounce window batching clustering runs after face detection.
 	ClusterDebounce time.Duration
 
@@ -123,6 +127,7 @@ func Load() *Config {
 		VectorDim:       envInt("IMMICH_VECTOR_DIM", 512),
 		ClusterDebounce: time.Duration(envInt("IMMICH_CLUSTER_DEBOUNCE_MS", 5000)) * time.Millisecond,
 		Store:           strings.ToLower(env("IMMICH_STORE", "duckdb")),
+		UploadLimitMB:   envInt("IMMICH_UPLOAD_LIMIT_MB", 8192),
 	}
 	c.DuckDBPath = env("IMMICH_DUCKDB", "")
 	if c.DuckDBPath == "" {
