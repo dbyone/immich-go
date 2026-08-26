@@ -2,11 +2,12 @@ package api
 
 import (
 	"net/http"
-	"time"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"immich-go/internal/config"
 )
@@ -15,8 +16,31 @@ import (
 // DuckDB with a separate read pool: writes must be immediately visible to
 // reader connections, and concurrent reads must not deadlock behind the
 // writer.
+// tempDirWinSafe replaces t.TempDir when the directory holds a DuckDB
+// file: database/sql closes busy connections asynchronously, so on
+// Windows the file may stay locked for a moment after App.Close. Removal
+// retries in the background instead of failing the test.
+func tempDirWinSafe(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "immich-readpool-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if err := os.RemoveAll(dir); err == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Logf("could not remove temp dir (still locked): %s", dir)
+	})
+	return dir
+}
+
 func TestFileBackedReadPoolSmoke(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDirWinSafe(t)
 	h, a := newTestServerApp(t, func(cfg *config.Config) {
 		cfg.DuckDBPath = filepath.Join(dir, "immich.duckdb")
 		cfg.DuckDBReaders = 4
