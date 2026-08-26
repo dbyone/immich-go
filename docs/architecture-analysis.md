@@ -123,7 +123,7 @@ JSON 对象，键为 task 名 + 图像尺寸：
 | NestJS 控制器 + `/api` 前缀 | `internal/api`（chi 路由） | 相同方法+路径+状态码+DTO 字段（camelCase、RFC3339 毫秒） |
 | Zod DTO | `internal/api/dto.go` 手写结构体 | 与 OpenAPI spec 字段一一对应 |
 | bcrypt(10) + 不透明 token + SHA-256 落库 | `internal/crypto` + `internal/auth` | 算法/常量/头名/Cookie 名一致；API Key 同构 |
-| Kysely + PostgreSQL | `internal/store`（接口）+ 内存实现 | 内存实现保证开箱即用；实体元数据的 SQL 实现为下一步（见 §5） |
+| Kysely + PostgreSQL | `internal/store/duckstore`（内嵌 DuckDB） | users/sessions/api_keys/assets(+exif)/albums(+有序资产/共享用户) 全部持久化于 `<media>/immich.duckdb`，与向量库共享连接；`IMMICH_STORE=memory` 可退回内存后端 |
 | **pgvector / VectorChord 向量检索** | **`internal/vectordb`（内嵌 DuckDB）** | `smart_search`/`face_search`/`person` 表 + SQL `array_cosine_similarity` 余弦检索 + Go 侧 DBSCAN 人脸聚类 + 并查集近重复检测；向量数据持久化于 `<media>/vectors.duckdb`，无需 PostgreSQL/Redis。详见 docs/duckdb-vectordb.md |
 | BullMQ + Redis 19 队列 | `internal/jobs` 进程内队列 | 队列名/统计字段与 `/api/jobs` 完全一致 |
 | `MachineLearningRepository` | `internal/ml` 客户端 | **wire 级兼容**：/ping、/predict multipart（entries/image/text）、pipeline JSON、失败转移、嵌入解码（JSON 数组字符串）逐字段断言测试 |
@@ -154,10 +154,10 @@ JSON 对象，键为 task 名 + 图像尺寸：
 
 ## 5. 尚未移植 / 后续路线
 
-1. **实体元数据 SQL 持久化**：`internal/store` 已按仓库模式隔离，可把 user/asset/album 等落到 DuckDB 或 PostgreSQL + 迁移 SQL；当前实体仍在内存（向量/人物/去重组已持久化在 DuckDB）。
-2. **EXIF 完整解析**（exiftool 等价物）：当前仅宽高/文件大小；补 EXIF/TIFF 解析后回填 `asset_exif`。
+1. ~~实体元数据 SQL 持久化~~ ✅ 已完成：`internal/store/duckstore` 落库 DuckDB，重启实测恢复。
+2. **EXIF 完整解析**（exiftool 等价物）：当前仅宽高/文件大小；补 EXIF/TIFF 解析后回填 `asset_exifs`。
 3. **视频转码 / HLS**（ffmpeg）、**thumbhash**、**存储模板迁移**（Handlebars 改名进 library/）。
 4. 人脸聚类的 person 命名/合并/拆分 API、OCR 结果入库。
 5. **共享链接、伙伴共享、同步协议 `/sync/stream`、记忆/标签/活动/通知/库扫描**等大块功能。
 6. **socket.io 实时事件**（需要 websocket 端点与 Redis adapter 语义）。
-7. **多 worker 进程模型**：当前单进程内嵌作业 worker；如需横向扩展可引入 asynq/river 等兼容 Redis 队列。
+7. **多 worker 进程模型**：当前单进程内嵌作业 worker；如需横向扩展可引入 asynq/river 等兼容 Redis 队列（实体与向量届时需评估 DuckDB 多进程写或迁移路径）。

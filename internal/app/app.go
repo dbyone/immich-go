@@ -5,9 +5,9 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"immich-go/internal/ml"
 	"immich-go/internal/storage"
 	"immich-go/internal/store"
+	"immich-go/internal/store/duckstore"
 	"immich-go/internal/vectordb"
 )
 
@@ -35,6 +36,10 @@ type App struct {
 	// pgvector layer: CLIP embeddings, face embeddings, people clusters.
 	Vectors *vectordb.Store
 
+	// db is the shared DuckDB connection for entities and vectors; App
+	// owns it and closes it on Close.
+	db *sql.DB
+
 	// Debounced re-computation: batches of face/smart-search jobs collapse
 	// into a single clustering / dedup run.
 	clusterMu    sync.Mutex
@@ -43,6 +48,9 @@ type App struct {
 	dedupTimer   *time.Timer
 }
 
+// New wires the application. A nil entity store selects the DuckDB
+// persistence (default); pass store.Store to inject an alternative
+// (e.g. memory in tests).
 func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 	stg, err := storage.New(cfg.MediaLocation)
 	if err != nil {
@@ -56,16 +64,25 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		CheckInterval:      cfg.MachineLearning.AvailabilityChecks.Interval,
 	}
 
-	vectorPath := cfg.VectorDBPath
-	if vectorPath == "" {
-		vectorPath = filepath.Join(cfg.MediaLocation, "vectors.duckdb")
-	}
-	vectors, err := vectordb.Open(vectorPath, cfg.VectorDim)
+	// One DuckDB database holds everything: entity metadata and vectors.
+	db, err := duckstore.OpenDB(cfg.DuckDBPath)
 	if err != nil {
-		return nil, fmt.Errorf("open vector db: %w", err)
+		return nil, fmt.Errorf("open duckdb %s: %w", cfg.DuckDBPath, err)
 	}
-	log.Info("vector store ready", "path", vectorPath, "dim", cfg.VectorDim,
-		"sqlCosine", vectors.HasSQLCosine())
+	vectors, err := vectordb.Attach(db, cfg.VectorDim)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init vector store: %w", err)
+	}
+	if st == nil {
+		st, err = duckstore.New(db)
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("init entity store: %w", err)
+		}
+	}
+	log.Info("duckdb ready", "path", cfg.DuckDBPath, "dim", cfg.VectorDim,
+		"entities", storeKind(st), "sqlCosine", vectors.HasSQLCosine())
 
 	a := &App{
 		Cfg:     cfg,
@@ -76,9 +93,17 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		Storage: stg,
 		Log:     log,
 		Vectors: vectors,
+		db:      db,
 	}
 	a.registerJobs()
 	return a, nil
+}
+
+func storeKind(st store.Store) string {
+	if st == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%T", st)
 }
 
 // Close releases background resources.
@@ -87,6 +112,9 @@ func (a *App) Close() {
 	a.ML.Teardown()
 	_ = a.Vectors.Close()
 	_ = a.Store.Close()
+	if a.db != nil {
+		_ = a.db.Close()
+	}
 }
 
 func (a *App) registerJobs() {

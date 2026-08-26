@@ -5,6 +5,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -60,11 +61,15 @@ type Config struct {
 	Host          string
 	MediaLocation string
 
-	// Vector store (DuckDB) — replaces the upstream pgvector/VectorChord
-	// layer. Path defaults to <media>/vectors.duckdb; Dim must match the
+	// DuckDB — the single durable state of the server: entity metadata
+	// plus the vector store. Path defaults to <media>/immich.duckdb;
+	// IMMICH_VECTOR_DB is honored as a legacy alias. Dim must match the
 	// embedding dimension of the configured models (512 by default).
-	VectorDBPath string
-	VectorDim    int
+	DuckDBPath string
+	VectorDim  int
+
+	// Store selects the entity backend: "duckdb" (default) or "memory".
+	Store string
 
 	// Debounce window batching clustering runs after face detection.
 	ClusterDebounce time.Duration
@@ -115,9 +120,16 @@ func Load() *Config {
 		Port:            envInt("IMMICH_PORT", DefaultPort),
 		Host:            env("IMMICH_HOST", DefaultHost),
 		MediaLocation:   env("IMMICH_MEDIA_LOCATION", DefaultMediaLocation),
-		VectorDBPath:    env("IMMICH_VECTOR_DB", ""),
 		VectorDim:       envInt("IMMICH_VECTOR_DIM", 512),
 		ClusterDebounce: time.Duration(envInt("IMMICH_CLUSTER_DEBOUNCE_MS", 5000)) * time.Millisecond,
+		Store:           strings.ToLower(env("IMMICH_STORE", "duckdb")),
+	}
+	c.DuckDBPath = env("IMMICH_DUCKDB", "")
+	if c.DuckDBPath == "" {
+		c.DuckDBPath = env("IMMICH_VECTOR_DB", "") // legacy alias
+	}
+	if c.DuckDBPath == "" {
+		c.DuckDBPath = filepath.Join(c.MediaLocation, "immich.duckdb")
 	}
 
 	ml := &c.MachineLearning

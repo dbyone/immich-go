@@ -5,7 +5,9 @@ API 面向 Immich v3.1.0（`/api` 前缀、相同路由、相同 DTO、相同鉴
 
 **向量数据库与聚类分析使用内嵌 DuckDB**（替代上游 pgvector/VectorChord + Redis）：
 CLIP/人脸向量、SQL 余弦检索、DBSCAN 人脸聚类（自动生成人物）、CLIP 近重复检测，
-全部内置于单个二进制，向量数据持久化在 `<media>/vectors.duckdb`。
+全部内置于单个二进制。**实体元数据（用户/会话/API Key/资产/相册）同样持久化在
+DuckDB**——`<media>/immich.duckdb` 一个文件即服务端的完整状态，重启不丢；无需
+PostgreSQL 与 Redis（`IMMICH_STORE=memory` 可退回易失内存后端）。
 
 > 注意：go-duckdb 需要 CGO —— 本机构建需安装 gcc/g++（Windows 用
 > [WinLibs](https://winlibs.com/) / MSYS2），Docker 构建已内置（见 Dockerfile）。
@@ -61,7 +63,9 @@ curl -X POST localhost:2283/api/search/smart \
 cmd/immich-go/          入口
 internal/config/        环境变量配置（与上游同名）
 internal/domain/        实体（对齐上游表结构语义）
-internal/store/         持久化接口 + 内存实现（实体元数据）
+internal/store/         持久化接口
+internal/store/duckstore/ DuckDB 实体存储（users/sessions/api_keys/assets/albums）★
+internal/store/memory/  内存后端（IMMICH_STORE=memory）
 internal/vectordb/      DuckDB 向量库（CLIP/人脸向量、SQL 余弦检索、DBSCAN 聚类、近重复检测）★
 internal/auth/          会话/API Key 鉴权（与上游 AuthService.validate 同优先级）
 internal/ml/            immich-machine-learning 客户端（wire 级兼容）★
@@ -79,9 +83,9 @@ docs/                   架构分析、ML 兼容、DuckDB 向量库文档
 |---|---|
 | immich-machine-learning（容器） | ✅ 直接对接（`/ping`、`/predict` multipart、多实例故障转移） |
 | 向量库 | ✅ 内嵌 DuckDB（smart_search/face_search/person 表、SQL 余弦、DBSCAN 人物聚类、近重复检测），无需 PostgreSQL/Redis |
+| 实体持久化 | ✅ 用户/会话/API Key/资产(含 EXIF)/相册 均持久化于 `<media>/immich.duckdb`，重启不丢（已实测重启恢复） |
 | Immich API（v3.1.0 子集） | ✅ auth/assets/albums/timeline/search/jobs/trash/sessions/api-keys/users/server/people/duplicates |
 | 官方 Web / 移动端 | ⚠️ 核心上传-浏览-相册-搜索链路可用；未覆盖功能（伙伴、共享链接、sync 等）会缺失 |
-| 实体元数据持久化 | ❌ 用户/资产/相册等当前为内存存储（向量数据已持久化到 DuckDB；store 接口为 SQL 实现预留） |
 
 详见 [docs/architecture-analysis.md](docs/architecture-analysis.md)（上游架构分析 + 移植映射 + 路线图）、
 [docs/ml-interface.md](docs/ml-interface.md)（ML 接口兼容矩阵）与

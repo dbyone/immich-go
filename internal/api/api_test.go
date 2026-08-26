@@ -20,7 +20,6 @@ import (
 
 	"immich-go/internal/app"
 	"immich-go/internal/config"
-	"immich-go/internal/store/memory"
 )
 
 // fakeML mimics the immich-machine-learning service: /ping and /predict
@@ -70,9 +69,11 @@ func newTestServer(t *testing.T) http.Handler {
 	// The fake ML service returns 3-dimensional vectors; the DuckDB vector
 	// store must be opened with the matching dimension.
 	cfg.VectorDim = 3
-	cfg.VectorDBPath = ":memory:"
+	cfg.DuckDBPath = ":memory:"
 
-	a, err := app.New(cfg, memory.New(), slog.New(slog.DiscardHandler))
+	// nil store → entity metadata persists to the same in-memory DuckDB
+	// database (the production default, minus the file).
+	a, err := app.New(cfg, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

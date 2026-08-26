@@ -1,8 +1,8 @@
-# DuckDB 向量库与聚类分析（替代 pgvector/VectorChord）
+# DuckDB：向量库、聚类分析与实体持久化（替代 pgvector/VectorChord + PostgreSQL + Redis）
 
-immich-go 不依赖 PostgreSQL + pgvector/VectorChord，而是把向量库内嵌到服务进程：
-`internal/vectordb` 基于 DuckDB（[marcboeker/go-duckdb](https://github.com/marcboeker/go-duckdb)）
-实现，单个文件（默认 `<media>/vectors.duckdb`）承载全部向量数据，零外部服务。
+immich-go 不依赖 PostgreSQL + pgvector/VectorChord，而是把**全部持久化状态**内嵌到服务进程：
+`internal/vectordb`（向量与聚类）与 `internal/store/duckstore`（实体元数据）共用同一个
+DuckDB 数据库文件（默认 `<media>/immich.duckdb`），单文件承载完整服务端状态，零外部服务。
 
 ## 1. 与上游方案的对照
 
@@ -13,12 +13,15 @@ immich-go 不依赖 PostgreSQL + pgvector/VectorChord，而是把向量库内嵌
 | 智能搜索 | `<=>` 余弦距离 + `set local vchordrq.probes` | SQL `array_cosine_similarity(...)` ORDER BY（brute-force） |
 | 人脸聚类（people） | 服务端聚类（facialRecognition 队列） | 同语义的 DBSCAN（Go 实现，数据来自 DuckDB） |
 | 重复检测 | `duplicateDetection` 队列 + pgvector 近邻 | SQL 自连接余弦 + 并查集分组 |
+| 实体元数据 | PostgreSQL + Kysely（user/session/api_key/asset/album...） | `duckstore`：users/sessions/api_keys/assets(+asset_exifs)/albums(+album_assets/album_users) |
 | 部署依赖 | PostgreSQL ≥14 + pgvector/VectorChord 扩展 + Redis | 无（单二进制内嵌） |
 
 > DuckDB 侧 SQL 余弦不可用时（如裁剪版构建）自动降级为 Go 侧余弦排序，
 > 行为一致（`Store.HasSQLCosine()` 在启动日志中标注）。
 
 ## 2. 表结构
+
+**向量库（`internal/vectordb`）**
 
 ```sql
 smart_search(asset_id PK, owner_id, model, embedding FLOAT[DIM], updated_at)
@@ -28,9 +31,34 @@ person(id PK, owner_id, name, is_hidden, is_favorite,
        face_count, thumbnail_asset_id, created_at, updated_at)
 ```
 
+**实体元数据（`internal/store/duckstore`）**
+
+```sql
+users(id PK, email UNIQUE, password(bcrypt), name, is_admin, should_change_password,
+      avatar_color, profile_image_path, storage_label, is_onboarded,
+      created_at, updated_at, deleted_at)
+sessions(id PK, token_hash BLOB, user_id, device_os, device_type, app_version,
+         created_at, updated_at, expires_at)          -- 会话 token 的 SHA-256
+api_keys(id PK, name, key_hash BLOB, user_id, permissions, created_at, updated_at)
+assets(id PK, owner_id, type, original_path, thumbnail_path, preview_path,
+       original_file_name, original_mime_type,
+       file_created_at, file_modified_at, local_datetime, created_at, updated_at, deleted_at,
+       is_favorite, duration, checksum BLOB, checksum_b64, width, height, visibility,
+       library_id, live_photo_video_id, duplicate_id, thumbhash)
+       -- (owner_id, checksum) 索引支撑上传去重
+asset_exifs(asset_id PK, make, model, lens_model, file_size, exif_width, exif_height,
+            date_time_original, latitude, longitude, city, state, country, description, rating)
+albums(id PK, owner_id, album_name, description, album_thumbnail_asset_id,
+       created_at, updated_at, deleted_at, is_activity_enabled, sort_order)
+album_assets(album_id, asset_id, position, PK(album_id, asset_id))  -- position 保持资产顺序
+album_users(album_id, user_id, role, PK(album_id, user_id))
+```
+
 - `DIM` 由配置决定（`IMMICH_VECTOR_DIM`，默认 512，须与 ML 模型输出一致）；
-- 写入用 `TRY_CAST('[0.1,0.2,...]' AS FLOAT[DIM])` 字符串绑定，读回 `CAST(embedding AS VARCHAR)`；
-- 向量在文件中持久化，重启不丢（`TestPersistenceAcrossReopen`）。
+- 向量写入用 `TRY_CAST('[0.1,0.2,...]' AS FLOAT[DIM])` 字符串绑定，读回 `CAST(embedding AS VARCHAR)`；
+- API Key 权限以逗号拼接存 VARCHAR（权限名不含逗号）；
+- 所有数据（实体 + 向量 + 人物）在单文件中持久化，重启不丢（有专门的重开持久化测试）；
+- 实体与向量共享单个数据库连接（串行），避免 DuckDB 嵌入式单写者的并发事务冲突。
 
 ## 3. 聚类分析
 
@@ -71,7 +99,9 @@ DBSCAN（`vectordb.DBSCAN`）等价实现：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `IMMICH_VECTOR_DB` | `<media>/vectors.duckdb` | DuckDB 文件路径 |
+| `IMMICH_DUCKDB` | `<media>/immich.duckdb` | DuckDB 数据库文件（实体 + 向量） |
+| `IMMICH_VECTOR_DB` | — | 兼容别名（旧版仅向量文件，现指向同一数据库） |
+| `IMMICH_STORE` | `duckdb` | 实体后端：`duckdb`（持久化）或 `memory`（易失） |
 | `IMMICH_VECTOR_DIM` | `512` | 向量维度（须匹配模型） |
 | `IMMICH_CLUSTER_DEBOUNCE_MS` | `5000` | 聚类/去重防抖窗口 |
 | `IMMICH_MACHINE_LEARNING_FACIAL_RECOGNITION_MAX_DISTANCE` | `0.5` | DBSCAN eps |

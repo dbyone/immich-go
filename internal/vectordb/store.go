@@ -49,35 +49,54 @@ type FaceRow struct {
 
 // Store wraps the DuckDB database. A single connection serializes access,
 // which matches DuckDB's embedded single-writer nature and keeps our
-// small critical sections free of transaction conflicts.
+// small critical sections free of transaction conflicts. When attached to
+// a shared database (Attach) the store does not own — and never closes —
+// the connection; entity metadata lives in the same file.
 type Store struct {
-	db  *sql.DB
-	dim int
+	db   *sql.DB
+	dim  int
+	owns bool
 
 	mu          sync.Mutex // guards clustering/dedup recomputation
 	hasCosineFn bool
 }
 
-// Open creates/opens the DuckDB file at path (":memory:" for testing)
-// with vectors of the given dimension.
+// Open creates/opens a dedicated DuckDB file at path (":memory:" for
+// testing) with vectors of the given dimension; Close closes it.
 func Open(path string, dim int) (*Store, error) {
-	if dim <= 0 {
-		dim = 512
-	}
 	db, err := sql.Open("duckdb", path)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	s, err := Attach(db, dim)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.owns = true
+	return s, nil
+}
+
+// Attach initializes the vector tables on a shared *sql.DB (single
+// connection expected). The caller stays responsible for closing it.
+func Attach(db *sql.DB, dim int) (*Store, error) {
+	if dim <= 0 {
+		dim = 512
+	}
 	s := &Store{db: db, dim: dim}
 	if err := s.init(); err != nil {
-		db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.owns {
+		return s.db.Close()
+	}
+	return nil
+}
 
 func (s *Store) Dim() int { return s.dim }
 
