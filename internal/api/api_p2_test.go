@@ -56,14 +56,30 @@ func TestSearchLongTail(t *testing.T) {
 		uploadForTest(t, h, token, testJPEG(t, i), "s.jpg")
 	}
 	waitExif(t, h, token)
-	// Seed a city like reverse geocoding would.
-	if assets, err := a.Store.Assets().ListForOwner(context.Background(), userIDOf(h, token)); err == nil {
+	// Seed a city like reverse geocoding would — but only once EVERY
+	// asset's metadata job has landed, else a later job re-parses EXIF
+	// over the seed (fast/loaded runners make the window real).
+	uid := userIDOf(h, token)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		assets, _ := a.Store.Assets().ListForOwner(context.Background(), uid)
+		ready := 0
 		for _, asset := range assets {
 			if asset.Exif != nil {
+				ready++
+			}
+		}
+		if ready == 3 {
+			for _, asset := range assets {
 				asset.Exif.City = "Shanghai"
 				_ = a.Store.Assets().Update(context.Background(), asset)
 			}
+			break
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("exif not ready for all assets: %d/3", ready)
+		}
+		time.Sleep(150 * time.Millisecond)
 	}
 
 	code, body := doJSON(t, h, http.MethodGet, "/api/search/cities", token, nil)
