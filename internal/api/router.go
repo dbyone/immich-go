@@ -155,6 +155,68 @@ func (s *Server) Router() http.Handler {
 			r.With(s.perm("sync.stream")).Delete("/sync/ack", s.deleteSyncAck)
 			r.With(s.perm("sync.stream")).Post("/sync/stream", s.syncStream)
 
+			// search long tail
+			r.With(s.perm("asset.read")).Get("/search/explore", s.searchExplore)
+			r.With(s.perm("asset.read")).Post("/search/random", s.searchRandom)
+			r.With(s.perm("asset.read")).Post("/search/statistics", s.searchStatistics)
+			r.With(s.perm("asset.read")).Get("/search/cities", s.searchCities)
+			r.With(s.perm("asset.read")).Get("/search/places", s.searchPlaces)
+			r.With(s.perm("person.read")).Get("/search/person", s.searchPerson)
+			r.With(s.perm("asset.read")).Post("/search/large-assets", s.searchLargeAssets)
+			r.With(s.perm("asset.read")).Get("/search/suggestions", s.searchSuggestions)
+
+			// sessions: create / update / lock
+			r.With(s.perm("session.create")).Post("/sessions", s.createSession)
+			r.With(s.perm("session.update")).Put("/sessions/{id}", s.updateSession)
+			r.With(s.perm("session.update")).Post("/sessions/{id}/lock", s.lockSession)
+
+			// stacks
+			r.With(s.perm("asset.read")).Get("/stacks", s.listStacks)
+			r.With(s.perm("asset.update")).Post("/stacks", s.createStack)
+			r.With(s.perm("asset.update")).Delete("/stacks", s.deleteStacksBulk)
+			r.With(s.perm("asset.read")).Get("/stacks/{id}", s.getStack)
+			r.With(s.perm("asset.update")).Put("/stacks/{id}", s.updateStack)
+			r.With(s.perm("asset.update")).Delete("/stacks/{id}", s.deleteStack)
+			r.With(s.perm("asset.update")).Delete("/stacks/{id}/assets/{assetId}", s.removeStackAsset)
+
+			// partners
+			r.With(s.perm("partner.read")).Get("/partners", s.listPartners)
+			r.With(s.perm("partner.create")).Post("/partners", s.createPartnerBody)
+			r.With(s.perm("partner.create")).Post("/partners/{id}", s.createPartnerByID)
+			r.With(s.perm("partner.update")).Put("/partners/{id}", s.updatePartner)
+			r.With(s.perm("partner.delete")).Delete("/partners/{id}", s.removePartner)
+
+			// search long tail
+			r.With(s.perm("asset.read")).Get("/search/explore", s.searchExplore)
+			r.With(s.perm("asset.read")).Post("/search/random", s.searchRandom)
+			r.With(s.perm("asset.read")).Post("/search/statistics", s.searchStatistics)
+			r.With(s.perm("asset.read")).Get("/search/cities", s.searchCities)
+			r.With(s.perm("asset.read")).Get("/search/places", s.searchPlaces)
+			r.With(s.perm("person.read")).Get("/search/person", s.searchPerson)
+			r.With(s.perm("asset.read")).Post("/search/large-assets", s.searchLargeAssets)
+			r.With(s.perm("asset.read")).Get("/search/suggestions", s.searchSuggestions)
+
+			// sessions: create / update / lock
+			r.With(s.perm("session.create")).Post("/sessions", s.createSession)
+			r.With(s.perm("session.update")).Put("/sessions/{id}", s.updateSession)
+			r.With(s.perm("session.update")).Post("/sessions/{id}/lock", s.lockSession)
+
+			// stacks
+			r.With(s.perm("asset.read")).Get("/stacks", s.listStacks)
+			r.With(s.perm("asset.update")).Post("/stacks", s.createStack)
+			r.With(s.perm("asset.update")).Delete("/stacks", s.deleteStacksBulk)
+			r.With(s.perm("asset.read")).Get("/stacks/{id}", s.getStack)
+			r.With(s.perm("asset.update")).Put("/stacks/{id}", s.updateStack)
+			r.With(s.perm("asset.update")).Delete("/stacks/{id}", s.deleteStack)
+			r.With(s.perm("asset.update")).Delete("/stacks/{id}/assets/{assetId}", s.removeStackAsset)
+
+			// partners
+			r.With(s.perm("partner.read")).Get("/partners", s.listPartners)
+			r.With(s.perm("partner.create")).Post("/partners", s.createPartnerBody)
+			r.With(s.perm("partner.create")).Post("/partners/{id}", s.createPartnerByID)
+			r.With(s.perm("partner.update")).Put("/partners/{id}", s.updatePartner)
+			r.With(s.perm("partner.delete")).Delete("/partners/{id}", s.removePartner)
+
 			// download / map / folder view
 			r.With(s.perm("asset.download")).Post("/download/info", s.downloadInfo)
 			r.With(s.perm("asset.download")).Post("/download/archive", s.downloadArchive)

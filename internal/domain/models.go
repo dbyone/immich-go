@@ -36,6 +36,9 @@ type User struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            *time.Time
+
+	// UpdateID is the incremental-sync watermark stamped on every write.
+	UpdateID int64
 }
 
 type Session struct {
@@ -115,6 +118,8 @@ type Asset struct {
 	// SmartEmbedding holds the decoded 512-dim CLIP vector produced by the
 	// machine-learning service (`smart_search.embedding` upstream).
 	SmartEmbedding []float32
+	// UpdateID is the incremental-sync watermark stamped on every write.
+	UpdateID int64
 }
 
 // ExifDescription returns the searchable description text, if any.
@@ -133,6 +138,7 @@ type AlbumUser struct {
 type Album struct {
 	ID                    string
 	OwnerID               string
+	UpdateID              int64
 	AlbumName             string
 	Description           string
 	AlbumThumbnailAssetID *string
@@ -168,8 +174,35 @@ type Memory struct {
 	DeletedAt *time.Time
 }
 
-// SyncAck is one acknowledged sync entity ("<Type>:<entityId>" pairs).
+// SyncAck is one acknowledged sync entity ("<Type>:<updateId>" pairs).
 type SyncAck struct {
 	Type string
 	Ack  string
+}
+
+// Stack groups related assets (e.g. burst shots); PrimaryAssetID leads.
+type Stack struct {
+	ID             string
+	OwnerID        string
+	PrimaryAssetID string
+	AssetIDs       []string // ordered, primary first
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// Partner is a library-sharing relation: OwnerID shares with UserID.
+type Partner struct {
+	ID         string
+	OwnerID    string // sharedBy
+	UserID     string // sharedWith
+	InTimeline bool
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// SyncDelete is a tombstone emitted when a synced entity goes away.
+type SyncDelete struct {
+	Type     string // AssetDeleteV1 / AlbumDeleteV1 / UserDeleteV1 ...
+	EntityID string
+	UpdateID int64
 }

@@ -15,7 +15,7 @@ type userStore Store
 
 const userColumns = `id, email, password, name, is_admin, should_change_password,
 	avatar_color, profile_image_path, storage_label, is_onboarded, preferences,
-	created_at, updated_at, deleted_at`
+	created_at, updated_at, deleted_at, update_id`
 
 func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 	var u domain.User
@@ -23,7 +23,7 @@ func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 	var prefs sql.NullString
 	if err := scanner.Scan(&u.ID, &u.Email, &u.Password, &u.Name, &u.IsAdmin,
 		&u.ShouldChangePassword, &u.AvatarColor, &u.ProfileImagePath, &u.StorageLabel,
-		&u.IsOnboarded, &prefs, &u.CreatedAt, &u.UpdatedAt, &deleted); err != nil {
+		&u.IsOnboarded, &prefs, &u.CreatedAt, &u.UpdatedAt, &deleted, &u.UpdateID); err != nil {
 		return nil, err
 	}
 	if prefs.Valid {
@@ -37,12 +37,17 @@ func scanUser(scanner interface{ Scan(...any) error }) (*domain.User, error) {
 }
 
 func (s *userStore) Create(ctx context.Context, u *domain.User) error {
-	_, err := s.db.ExecContext(ctx, `
+	uid, err := (*Store)(s).nextUpdateID(ctx)
+	if err != nil {
+		return err
+	}
+	u.UpdateID = uid
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO users (`+userColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Email, u.Password, u.Name, u.IsAdmin, u.ShouldChangePassword,
 		u.AvatarColor, u.ProfileImagePath, u.StorageLabel, u.IsOnboarded, u.Preferences,
-		u.CreatedAt, u.UpdatedAt, u.DeletedAt)
+		u.CreatedAt, u.UpdatedAt, u.DeletedAt, u.UpdateID)
 	if isUniqueViolation(err) {
 		return store.ErrConflict
 	}
@@ -50,15 +55,20 @@ func (s *userStore) Create(ctx context.Context, u *domain.User) error {
 }
 
 func (s *userStore) Update(ctx context.Context, u *domain.User) error {
+	uid, err := (*Store)(s).nextUpdateID(ctx)
+	if err != nil {
+		return err
+	}
+	u.UpdateID = uid
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE users SET
 			email = ?, password = ?, name = ?, is_admin = ?, should_change_password = ?,
 			avatar_color = ?, profile_image_path = ?, storage_label = ?, is_onboarded = ?,
-			preferences = ?, updated_at = ?, deleted_at = ?
+			preferences = ?, updated_at = ?, deleted_at = ?, update_id = ?
 		WHERE id = ?`,
 		u.Email, u.Password, u.Name, u.IsAdmin, u.ShouldChangePassword,
 		u.AvatarColor, u.ProfileImagePath, u.StorageLabel, u.IsOnboarded,
-		u.Preferences, u.UpdatedAt, u.DeletedAt, u.ID)
+		u.Preferences, u.UpdatedAt, u.DeletedAt, u.UpdateID, u.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return store.ErrConflict

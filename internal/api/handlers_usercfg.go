@@ -14,7 +14,7 @@ const defaultPreferences = `{
 	"download": {"archiveSize": 4294967296, "includeEmbeddedVideos": false},
 	"emailNotifications": {"albumInvite": true, "albumUpdate": true, "enabled": true},
 	"folders": {"enabled": false, "sidebarWeb": false},
-	"memories": {"duration": 5259600, "enabled": true},
+	"memories": {"duration": 5259600, "enabled": true, "sidebarWeb": true},
 	"people": {"enabled": true, "minimumFaces": 3, "sidebarWeb": true},
 	"purchase": {"hideBuyButtonUntil": "", "showSupportBadge": true},
 	"ratings": {"enabled": false},

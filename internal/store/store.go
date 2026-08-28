@@ -91,6 +91,37 @@ type MetadataStore interface {
 	SetIfAbsent(ctx context.Context, key, value string) (bool, error)
 }
 
+type StackStore interface {
+	Create(ctx context.Context, s *domain.Stack) error
+	Update(ctx context.Context, s *domain.Stack) error
+	Delete(ctx context.Context, id string) error
+	Get(ctx context.Context, id string) (*domain.Stack, error)
+	ListForOwner(ctx context.Context, ownerID string) ([]*domain.Stack, error)
+}
+
+type PartnerStore interface {
+	Create(ctx context.Context, p *domain.Partner) error
+	Update(ctx context.Context, p *domain.Partner) error
+	Delete(ctx context.Context, id string) error
+	Get(ctx context.Context, id string) (*domain.Partner, error)
+	ListSharedBy(ctx context.Context, userID string) ([]*domain.Partner, error)
+	ListSharedWith(ctx context.Context, userID string) ([]*domain.Partner, error)
+}
+
+// SyncStore serves the incremental sync stream: entities changed after a
+// watermark (update_id) plus tombstones for deleted ones.
+type SyncStore interface {
+	// AssetsSince / AlbumsSince / UsersSince return rows whose update_id
+	// exceeds the watermark, ascending.
+	AssetsSince(ctx context.Context, ownerID string, since int64, limit int) ([]*domain.Asset, error)
+	AlbumsSince(ctx context.Context, ownerID string, since int64, limit int) ([]*domain.Album, error)
+	UsersSince(ctx context.Context, since int64, limit int) ([]*domain.User, error)
+	// DeletesSince returns tombstones recorded after the watermark.
+	DeletesSince(ctx context.Context, types []string, since int64, limit int) ([]domain.SyncDelete, error)
+	// LatestUpdateID is the current head of the change sequence.
+	LatestUpdateID(ctx context.Context) (int64, error)
+}
+
 type Store interface {
 	Users() UserStore
 	Sessions() SessionStore
@@ -100,6 +131,9 @@ type Store interface {
 	Memories() MemoryStore
 	SyncAcks() SyncAckStore
 	Metadata() MetadataStore
+	Stacks() StackStore
+	Partners() PartnerStore
+	Sync() SyncStore
 
 	// Close releases resources held by the store.
 	Close() error

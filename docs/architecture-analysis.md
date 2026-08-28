@@ -150,7 +150,7 @@ JSON 对象，键为 task 名 + 图像尺寸：
 - 向量/聚类：`GET /people`（DuckDB DBSCAN 人物簇）、`GET /duplicates`（CLIP 近重复组）、`POST /jobs {"name":"face-clustering"|"detect-duplicates"}`（手动触发，immich-go 扩展）
 - people 全套：创建/改名/收藏/隐藏/删除（单个+批量）、`POST /people/{id}/merge`（合并）、`PUT /people/{id}/reassign`（人脸重归属）、`GET /people/{id}/statistics`、`GET /people/{id}/thumbnail`（从原图按人脸框裁剪头像）
 - memories 全套：列表/创建/统计/详情/更新/删除/资产增删
-- sync 基础版：`GET/POST/DELETE /sync/ack` + `POST /sync/stream`（NDJSON；AuthUser/User/Asset/Album/AlbumToAssets 类型的全量快照 + ack 跳过语义，未实现细粒度增量）
+- sync **增量化**：`GET/POST/DELETE /sync/ack` + `POST /sync/stream`（NDJSON；全局 update_id 单调序列戳在每个实体行上，ack 为 `<Type>:<updateId>` 水位；流返回水位之后的实体 + 硬删除墓碑 AssetDeleteV1/AlbumDeleteV1/UserDeleteV1；支持 AuthUsersV1/UsersV1/AssetsV1/AssetsV2/AlbumsV1/AlbumsV2）
 - 重复项处理：`POST /duplicates/resolve`（保留/回收分组内资产并解散组）、`DELETE /duplicates[/{id}]`
 - 下载：`POST /download/info`（按 archiveSize 分卷预估）、`POST /download/archive`（zip 流式下载）
 - 地图/文件夹：`GET /map/markers`（带 GPS 资产聚合点）、`GET /map/reverse-geocode`（无本地地理数据，返回空表优雅降级）、`GET /view/folder[/unique-paths]`
@@ -169,6 +169,6 @@ JSON 对象，键为 task 名 + 图像尺寸：
 2. **资产长尾**：`/assets/copy`、资产级 metadata CRUD 与 edits（beta 编辑）、`/assets/{id}/ocr`、HLS 自适应流 4 端点（依赖 ffmpeg 转码）。
 3. **用户长尾**：`PUT /users/me`、calendar-heatmap、license（跳过）、onboarding 3 端点、preferences（admin 侧 2 端点）、头像上传/读取。
 4. **共享链接（9，按决策暂缓）**、**partners（5）**、**stacks（7）**、**tags（9）**、**libraries（8，外部目录扫描）**、**activities（4，相册评论）**、**faces（4）**、**asset-files（4）**、**notifications（6）**、**workflows（8）**、**cluster-groups（7）**、**plugins（4）**。
-5. **sync 细粒度增量**：当前为「全量快照 + ack 跳过」，未实现 per-entity 变更流与删除事件（AssetDeleteV1 等）。
+5. ~~sync 细粒度增量~~ ✅ 已完成：全局 update_id 序列 + 墓碑表 sync_deletes，Assets/Albums/Users 类型支持增量与删除事件（内存与 DuckDB 双后端）。
 6. **search 长尾**：explore/places/cities/person/random/statistics/suggestions（8）。
 7. **system-config（4）**、**system-metadata 其余 2**、**queues 新形态（5）**、**oauth（6）**、**socket.io 实时事件**、**多 worker 进程模型**。

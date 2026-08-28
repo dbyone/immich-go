@@ -70,6 +70,7 @@ type AuthStatusResponse struct {
 
 type SessionResponse struct {
 	ID                string   `json:"id"`
+	Token             string   `json:"token,omitempty"`
 	CreatedAt         ISOTime  `json:"createdAt"`
 	UpdatedAt         ISOTime  `json:"updatedAt"`
 	ExpiresAt         *ISOTime `json:"expiresAt,omitempty"`

@@ -1,17 +1,19 @@
+// Sync protocol, incremental edition. Every synced entity row carries an
+// update_id drawn from one global sequence; acks are "<Type>:<updateId>"
+// watermarks per type. The stream returns entities whose update_id exceeds
+// the client's watermark plus tombstones (AssetDeleteV1, AlbumDeleteV1,
+// UserDeleteV1) recorded on hard deletes. A type without an ack streams a
+// full snapshot first; reset=true or deleting acks restarts a type.
 package api
 
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"immich-go/internal/domain"
 )
-
-// Sync protocol, basic edition. Acks encode as "<Type>:<entityId>"; the
-// stream serves a full snapshot per requested type unless the client has
-// acknowledged that type before, in which case nothing is resent (the
-// client can reset by deleting acks or sending reset=true).
 
 type syncAckEntry struct {
 	Ack  string `json:"ack"`
@@ -81,9 +83,26 @@ func (s *Server) deleteSyncAck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// syncStream emits NDJSON lines {"ack","type","data"}. Supported types:
-// AuthUserV1/UserV1 (users), AssetV1/AssetV2 (owner assets),
-// AlbumsV1 (albums), AlbumToAssetsV1 (album membership).
+// watermark extracts the highest acknowledged update_id for each type.
+func watermark(acks []domain.SyncAck) map[string]int64 {
+	out := map[string]int64{}
+	for _, a := range acks {
+		parts := strings.SplitN(a.Ack, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if id, err := strconv.ParseInt(parts[1], 10, 64); err == nil && id > out[a.Type] {
+			out[a.Type] = id
+		}
+	}
+	return out
+}
+
+// syncStream emits NDJSON lines {"ack","type","data"}.
+//
+// Supported request types: AuthUsersV1 (self), UsersV1, AssetsV1/AssetsV2
+// (upserts + AssetDeleteV1 tombstones), AlbumsV1 (AlbumV1 upserts with
+// member assetIds + AlbumDeleteV1). Unknown types are ignored.
 func (s *Server) syncStream(w http.ResponseWriter, r *http.Request) {
 	a := caller(w, r)
 	if a == nil {
@@ -97,19 +116,16 @@ func (s *Server) syncStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-
-	ackedTypes := map[string]bool{}
-	if !req.Reset {
-		if acks, err := s.app.Store.SyncAcks().List(r.Context(), a.User.ID); err == nil {
-			for _, ack := range acks {
-				ackedTypes[ack.Type] = true
-			}
-		}
-	}
-
 	wanted := map[string]bool{}
 	for _, t := range req.Types {
 		wanted[t] = true
+	}
+
+	since := map[string]int64{}
+	if !req.Reset {
+		if acks, err := s.app.Store.SyncAcks().List(r.Context(), a.User.ID); err == nil {
+			since = watermark(acks)
+		}
 	}
 
 	flusher, _ := w.(http.Flusher)
@@ -118,9 +134,9 @@ func (s *Server) syncStream(w http.ResponseWriter, r *http.Request) {
 
 	write := func(typ, ack string, data any) {
 		line := struct {
-			Ack  string       `json:"ack"`
-			Type string       `json:"type"`
-			Data any          `json:"data"`
+			Ack  string `json:"ack"`
+			Type string `json:"type"`
+			Data any    `json:"data"`
 		}{Ack: ack, Type: typ, Data: data}
 		b, err := json.Marshal(line)
 		if err != nil {
@@ -131,88 +147,77 @@ func (s *Server) syncStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	synced := map[string]bool{}
 
-	emitUsers := func(typ string) {
-		if ackedTypes[typ] {
-			return
-		}
-		if typ == "AuthUserV1" {
-			write(typ, typ+":"+a.User.ID, userResponse(a.User))
-			return
-		}
-		users, err := s.app.Store.Users().List(r.Context())
-		if err != nil {
-			return
-		}
-		for _, u := range users {
-			write(typ, typ+":"+u.ID, userResponse(u))
+	const limit = 1000
+
+	// The canonical request type is AuthUsersV1; accept the singular
+	// spelling older clients used too. Honors the watermark like any
+	// other type so an acked self stops resending.
+	if wanted["AuthUsersV1"] || wanted["AuthUserV1"] {
+		if a.User.UpdateID > since["AuthUserV1"] {
+			write("AuthUserV1", "AuthUserV1:"+strconv.FormatInt(a.User.UpdateID, 10), userResponse(a.User))
 		}
 	}
 
-	emitAssets := func(typ string) {
-		if ackedTypes[typ] {
-			return
+	if wanted["UsersV1"] {
+		users, err := s.app.Store.Sync().UsersSince(r.Context(), since["UserV1"], limit)
+		if err == nil {
+			for _, u := range users {
+				write("UserV1", "UserV1:"+strconv.FormatInt(u.UpdateID, 10), userResponse(u))
+			}
 		}
-		assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
-		if err != nil {
-			return
-		}
-		for _, asset := range assets {
-			if asset.DeletedAt == nil {
-				write(typ, typ+":"+asset.ID, s.syncAsset(asset))
+		if dels, err := s.app.Store.Sync().DeletesSince(r.Context(), []string{"UserDeleteV1"}, since["UserDeleteV1"], limit); err == nil {
+			for _, d := range dels {
+				write(d.Type, d.Type+":"+strconv.FormatInt(d.UpdateID, 10), map[string]any{"userId": d.EntityID})
 			}
 		}
 	}
 
-	emitAlbums := func(typ string) {
-		if ackedTypes[typ] {
-			return
+	if wanted["AssetsV1"] || wanted["AssetsV2"] {
+		assetType := "AssetV1"
+		if wanted["AssetsV2"] {
+			assetType = "AssetV2"
 		}
-		albums, err := s.app.Store.Albums().ListForOwner(r.Context(), a.User.ID)
-		if err != nil {
-			return
+		assets, err := s.app.Store.Sync().AssetsSince(r.Context(), a.User.ID, since[assetType], limit)
+		if err == nil {
+			for _, asset := range assets {
+				write(assetType, assetType+":"+strconv.FormatInt(asset.UpdateID, 10), s.syncAsset(asset))
+			}
 		}
-		for _, al := range albums {
-			resp := s.albumResponse(r, al, false)
-			if typ == "AlbumToAssetsV1" {
-				write(typ, typ+":"+al.ID, map[string]any{
-					"albumId":  al.ID,
-					"assetIds": al.AssetIDs,
+		if dels, err := s.app.Store.Sync().DeletesSince(r.Context(), []string{"AssetDeleteV1"}, since["AssetDeleteV1"], limit); err == nil {
+			for _, d := range dels {
+				write(d.Type, d.Type+":"+strconv.FormatInt(d.UpdateID, 10), map[string]any{"assetId": d.EntityID})
+			}
+		}
+	}
+
+	if wanted["AlbumsV1"] || wanted["AlbumsV2"] {
+		albumType := "AlbumV1"
+		if wanted["AlbumsV2"] {
+			albumType = "AlbumV2"
+		}
+		albums, err := s.app.Store.Sync().AlbumsSince(r.Context(), a.User.ID, since[albumType], limit)
+		if err == nil {
+			for _, al := range albums {
+				write(albumType, albumType+":"+strconv.FormatInt(al.UpdateID, 10), map[string]any{
+					"id":        al.ID,
+					"ownerId":   al.OwnerID,
+					"albumName": al.AlbumName,
+					"assetIds":  al.AssetIDs,
+					"createdAt": ISOTime(al.CreatedAt),
+					"updatedAt": ISOTime(al.UpdatedAt),
 				})
-				continue
 			}
-			write(typ, typ+":"+al.ID, resp)
 		}
-	}
-
-	for _, typ := range []string{
-		"AuthUserV1", "UserV1", "UsersV1",
-		"AssetV1", "AssetV2", "AssetsV1",
-		"AlbumsV1", "AlbumV1", "AlbumToAssetsV1",
-	} {
-		if !wanted[typ] || synced[typ] {
-			continue
-		}
-		switch {
-		case typ == "AuthUserV1":
-			emitUsers(typ)
-			synced[typ] = true
-		case typ == "UserV1" || typ == "UsersV1":
-			emitUsers(typ)
-			synced[typ] = true
-		case typ == "AssetV1" || typ == "AssetV2" || typ == "AssetsV1":
-			emitAssets(typ)
-			synced[typ] = true
-		default:
-			emitAlbums(typ)
-			synced[typ] = true
+		if dels, err := s.app.Store.Sync().DeletesSince(r.Context(), []string{"AlbumDeleteV1"}, since["AlbumDeleteV1"], limit); err == nil {
+			for _, d := range dels {
+				write(d.Type, d.Type+":"+strconv.FormatInt(d.UpdateID, 10), map[string]any{"albumId": d.EntityID})
+			}
 		}
 	}
 }
 
-// syncAsset is the v1 wire shape for synced assets (subset of
-// AssetResponseDto the mobile sync consumer needs).
+// syncAsset is the v1 wire shape for synced assets.
 func (s *Server) syncAsset(asset *domain.Asset) map[string]any {
 	return map[string]any{
 		"id":               asset.ID,

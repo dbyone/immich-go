@@ -7,21 +7,26 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"immich-go/internal/domain"
 	"immich-go/internal/store"
 )
 
 type Memory struct {
-	mu       sync.RWMutex
-	users    map[string]*domain.User
-	sessions map[string]*domain.Session
-	apiKeys  map[string]*domain.APIKey
-	assets   map[string]*domain.Asset
-	albums   map[string]*domain.Album
-	memories map[string]*domain.Memory
-	syncAcks map[string]map[string]bool // userID -> ack -> exists
-	meta     map[string]string
+	mu         sync.RWMutex
+	users      map[string]*domain.User
+	sessions   map[string]*domain.Session
+	apiKeys    map[string]*domain.APIKey
+	assets     map[string]*domain.Asset
+	albums     map[string]*domain.Album
+	memories   map[string]*domain.Memory
+	stacks     map[string]*domain.Stack
+	partners   map[string]*domain.Partner
+	syncAcks   map[string]map[string]bool // userID -> ack -> exists
+	meta       map[string]string
+	deletes    []domain.SyncDelete
+	updateSeq  atomic.Int64
 }
 
 func New() *Memory {
@@ -32,6 +37,8 @@ func New() *Memory {
 		assets:   map[string]*domain.Asset{},
 		albums:   map[string]*domain.Album{},
 		memories: map[string]*domain.Memory{},
+		stacks:   map[string]*domain.Stack{},
+		partners: map[string]*domain.Partner{},
 		syncAcks: map[string]map[string]bool{},
 		meta:     map[string]string{},
 	}
@@ -47,6 +54,9 @@ func (m *Memory) Albums() store.AlbumStore      { return (*albumStore)(m) }
 func (m *Memory) Memories() store.MemoryStore   { return (*memoryStore)(m) }
 func (m *Memory) SyncAcks() store.SyncAckStore  { return (*syncAckStore)(m) }
 func (m *Memory) Metadata() store.MetadataStore { return (*metadataStore)(m) }
+func (m *Memory) Stacks() store.StackStore     { return (*stackStore)(m) }
+func (m *Memory) Partners() store.PartnerStore { return (*partnerStore)(m) }
+func (m *Memory) Sync() store.SyncStore        { return (*syncStore)(m) }
 
 // clone helpers keep references handed out of the store independent of the
 // stored copies, mirroring how a database returns fresh rows.
@@ -93,6 +103,7 @@ func (s *userStore) Create(_ context.Context, u *domain.User) error {
 			return store.ErrConflict
 		}
 	}
+	u.UpdateID = m.nextUpdateID()
 	m.users[u.ID] = cloneUser(u)
 	return nil
 }
@@ -104,6 +115,7 @@ func (s *userStore) Update(_ context.Context, u *domain.User) error {
 	if _, ok := m.users[u.ID]; !ok {
 		return store.ErrNotFound
 	}
+	u.UpdateID = m.nextUpdateID()
 	m.users[u.ID] = cloneUser(u)
 	return nil
 }
@@ -116,6 +128,7 @@ func (s *userStore) Delete(_ context.Context, id string) error {
 		return store.ErrNotFound
 	}
 	delete(m.users, id)
+	m.recordDeleteMem("UserDeleteV1", id)
 	return nil
 }
 
@@ -314,6 +327,7 @@ func (s *assetStore) Create(_ context.Context, a *domain.Asset) error {
 	m := (*Memory)(s)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	a.UpdateID = m.nextUpdateID()
 	m.assets[a.ID] = cloneAsset(a)
 	return nil
 }
@@ -325,6 +339,7 @@ func (s *assetStore) Update(_ context.Context, a *domain.Asset) error {
 	if _, ok := m.assets[a.ID]; !ok {
 		return store.ErrNotFound
 	}
+	a.UpdateID = m.nextUpdateID()
 	m.assets[a.ID] = cloneAsset(a)
 	return nil
 }
@@ -334,6 +349,7 @@ func (s *assetStore) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.assets, id)
+	m.recordDeleteMem("AssetDeleteV1", id)
 	return nil
 }
 
@@ -401,6 +417,7 @@ func (s *albumStore) Create(_ context.Context, a *domain.Album) error {
 	m := (*Memory)(s)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	a.UpdateID = m.nextUpdateID()
 	stored := cloneAlbum(a)
 	rebuildIndex(stored)
 	m.albums[a.ID] = stored
@@ -414,6 +431,7 @@ func (s *albumStore) Update(_ context.Context, a *domain.Album) error {
 	if _, ok := m.albums[a.ID]; !ok {
 		return store.ErrNotFound
 	}
+	a.UpdateID = m.nextUpdateID()
 	stored := cloneAlbum(a)
 	rebuildIndex(stored)
 	m.albums[a.ID] = stored
@@ -425,6 +443,7 @@ func (s *albumStore) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.albums, id)
+	m.recordDeleteMem("AlbumDeleteV1", id)
 	return nil
 }
 

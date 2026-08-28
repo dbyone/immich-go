@@ -17,18 +17,18 @@ const assetColumns = `id, owner_id, type, original_path, thumbnail_path, preview
 	original_file_name, original_mime_type,
 	file_created_at, file_modified_at, local_datetime, created_at, updated_at, deleted_at,
 	is_favorite, duration, checksum, checksum_b64, width, height, visibility,
-	library_id, live_photo_video_id, duplicate_id, thumbhash`
+	library_id, live_photo_video_id, duplicate_id, thumbhash, update_id`
 
 func scanAsset(scanner rowScanner) (*domain.Asset, error) {
 	var a domain.Asset
 	var deleted sql.NullTime
-	var duration, width, height sql.NullInt64
+	var duration, width, height, updateID sql.NullInt64
 	var libraryID, livePhotoID, duplicateID sql.NullString
 	if err := scanner.Scan(&a.ID, &a.OwnerID, &a.Type, &a.OriginalPath, &a.ThumbnailPath,
 		&a.PreviewPath, &a.OriginalFileName, &a.OriginalMimeType,
 		&a.FileCreatedAt, &a.FileModifiedAt, &a.LocalDateTime, &a.CreatedAt, &a.UpdatedAt,
 		&deleted, &a.IsFavorite, &duration, &a.Checksum, &a.ChecksumB64, &width, &height,
-		&a.Visibility, &libraryID, &livePhotoID, &duplicateID, &a.Thumbhash); err != nil {
+		&a.Visibility, &libraryID, &livePhotoID, &duplicateID, &a.Thumbhash, &updateID); err != nil {
 		return nil, err
 	}
 	if deleted.Valid {
@@ -59,6 +59,9 @@ func scanAsset(scanner rowScanner) (*domain.Asset, error) {
 		v := duplicateID.String
 		a.DuplicateID = &v
 	}
+	if updateID.Valid {
+		a.UpdateID = updateID.Int64
+	}
 	return &a, nil
 }
 
@@ -68,12 +71,17 @@ func assetValues(a *domain.Asset) []any {
 		a.OriginalFileName, a.OriginalMimeType,
 		a.FileCreatedAt, a.FileModifiedAt, a.LocalDateTime, a.CreatedAt, a.UpdatedAt,
 		a.DeletedAt, a.IsFavorite, a.Duration, a.Checksum, a.ChecksumB64, a.Width, a.Height,
-		a.Visibility, a.LibraryID, a.LivePhotoVideoID, a.DuplicateID, a.Thumbhash,
+		a.Visibility, a.LibraryID, a.LivePhotoVideoID, a.DuplicateID, a.Thumbhash, a.UpdateID,
 	}
 }
 
 func (s *assetStore) Create(ctx context.Context, a *domain.Asset) error {
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", 25), ", ")
+	uid, err := (*Store)(s).nextUpdateID(ctx)
+	if err != nil {
+		return err
+	}
+	a.UpdateID = uid
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", 26), ", ")
 	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO assets (`+assetColumns+`) VALUES (`+placeholders+`)`, assetValues(a)...); err != nil {
@@ -87,6 +95,11 @@ func (s *assetStore) Create(ctx context.Context, a *domain.Asset) error {
 }
 
 func (s *assetStore) Update(ctx context.Context, a *domain.Asset) error {
+	uid, err := (*Store)(s).nextUpdateID(ctx)
+	if err != nil {
+		return err
+	}
+	a.UpdateID = uid
 	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
 			UPDATE assets SET
@@ -95,14 +108,15 @@ func (s *assetStore) Update(ctx context.Context, a *domain.Asset) error {
 				file_created_at = ?, file_modified_at = ?, local_datetime = ?,
 				updated_at = ?, deleted_at = ?, is_favorite = ?, duration = ?,
 				checksum = ?, checksum_b64 = ?, width = ?, height = ?, visibility = ?,
-				library_id = ?, live_photo_video_id = ?, duplicate_id = ?, thumbhash = ?
+				library_id = ?, live_photo_video_id = ?, duplicate_id = ?, thumbhash = ?,
+				update_id = ?
 			WHERE id = ?`,
 			a.OwnerID, a.Type, a.OriginalPath, a.ThumbnailPath, a.PreviewPath,
 			a.OriginalFileName, a.OriginalMimeType,
 			a.FileCreatedAt, a.FileModifiedAt, a.LocalDateTime,
 			a.UpdatedAt, a.DeletedAt, a.IsFavorite, a.Duration,
 			a.Checksum, a.ChecksumB64, a.Width, a.Height, a.Visibility,
-			a.LibraryID, a.LivePhotoVideoID, a.DuplicateID, a.Thumbhash, a.ID)
+			a.LibraryID, a.LivePhotoVideoID, a.DuplicateID, a.Thumbhash, a.UpdateID, a.ID)
 		if err != nil {
 			return err
 		}
@@ -152,7 +166,10 @@ func (s *assetStore) Delete(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		return rowsAffected(res, 1)
+		if err := rowsAffected(res, 1); err != nil {
+			return err
+		}
+		return (*Store)(s).recordDelete(ctx, tx, "AssetDeleteV1", id)
 	})
 }
 
@@ -375,15 +392,19 @@ func (s *assetStore) ListForOwner(ctx context.Context, ownerID string) ([]*domai
 type albumStore Store
 
 const albumColumns = `id, owner_id, album_name, description, album_thumbnail_asset_id,
-	created_at, updated_at, deleted_at, is_activity_enabled, sort_order`
+	created_at, updated_at, deleted_at, is_activity_enabled, sort_order, update_id`
 
 func scanAlbum(scanner rowScanner) (*domain.Album, error) {
 	var al domain.Album
 	var deleted sql.NullTime
 	var thumb sql.NullString
+	var albumUpdateID sql.NullInt64
 	if err := scanner.Scan(&al.ID, &al.OwnerID, &al.AlbumName, &al.Description, &thumb,
-		&al.CreatedAt, &al.UpdatedAt, &deleted, &al.IsActivityEnabled, &al.Order); err != nil {
+		&al.CreatedAt, &al.UpdatedAt, &deleted, &al.IsActivityEnabled, &al.Order, &albumUpdateID); err != nil {
 		return nil, err
+	}
+	if albumUpdateID.Valid {
+		al.UpdateID = albumUpdateID.Int64
 	}
 	if deleted.Valid {
 		t := deleted.Time
@@ -399,12 +420,17 @@ func scanAlbum(scanner rowScanner) (*domain.Album, error) {
 func albumValues(al *domain.Album) []any {
 	return []any{
 		al.ID, al.OwnerID, al.AlbumName, al.Description, al.AlbumThumbnailAssetID,
-		al.CreatedAt, al.UpdatedAt, al.DeletedAt, al.IsActivityEnabled, al.Order,
+		al.CreatedAt, al.UpdatedAt, al.DeletedAt, al.IsActivityEnabled, al.Order, al.UpdateID,
 	}
 }
 
 func (s *albumStore) Create(ctx context.Context, al *domain.Album) error {
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", 10), ", ")
+	uid, err := (*Store)(s).nextUpdateID(ctx)
+	if err != nil {
+		return err
+	}
+	al.UpdateID = uid
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", 11), ", ")
 	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO albums (`+albumColumns+`) VALUES (`+placeholders+`)`, albumValues(al)...); err != nil {
@@ -476,14 +502,20 @@ func assetIDArgs(ids []string) []any {
 }
 
 func (s *albumStore) Update(ctx context.Context, al *domain.Album) error {
+	uid, err := (*Store)(s).nextUpdateID(ctx)
+	if err != nil {
+		return err
+	}
+	al.UpdateID = uid
 	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
 			UPDATE albums SET
 				owner_id = ?, album_name = ?, description = ?, album_thumbnail_asset_id = ?,
-				updated_at = ?, deleted_at = ?, is_activity_enabled = ?, sort_order = ?
+				updated_at = ?, deleted_at = ?, is_activity_enabled = ?, sort_order = ?,
+				update_id = ?
 			WHERE id = ?`,
 			al.OwnerID, al.AlbumName, al.Description, al.AlbumThumbnailAssetID,
-			al.UpdatedAt, al.DeletedAt, al.IsActivityEnabled, al.Order, al.ID)
+			al.UpdatedAt, al.DeletedAt, al.IsActivityEnabled, al.Order, al.UpdateID, al.ID)
 		if err != nil {
 			return err
 		}
@@ -506,7 +538,10 @@ func (s *albumStore) Delete(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		return rowsAffected(res, 1)
+		if err := rowsAffected(res, 1); err != nil {
+			return err
+		}
+		return (*Store)(s).recordDelete(ctx, tx, "AlbumDeleteV1", id)
 	})
 }
 

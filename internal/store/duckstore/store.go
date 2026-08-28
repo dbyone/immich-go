@@ -83,9 +83,12 @@ func (s *Store) Sessions() store.SessionStore { return (*sessionStore)(s) }
 func (s *Store) APIKeys() store.APIKeyStore   { return (*apiKeyStore)(s) }
 func (s *Store) Assets() store.AssetStore     { return (*assetStore)(s) }
 func (s *Store) Albums() store.AlbumStore     { return (*albumStore)(s) }
-func (s *Store) Memories() store.MemoryStore  { return (*memoryStore)(s) }
-func (s *Store) SyncAcks() store.SyncAckStore { return (*syncAckStore)(s) }
-func (s *Store) Metadata() store.MetadataStore { return (*metadataStore)(s) }
+func (s *Store) Memories() store.MemoryStore    { return (*memoryStore)(s) }
+func (s *Store) SyncAcks() store.SyncAckStore   { return (*syncAckStore)(s) }
+func (s *Store) Metadata() store.MetadataStore  { return (*metadataStore)(s) }
+func (s *Store) Stacks() store.StackStore       { return (*stackStore)(s) }
+func (s *Store) Partners() store.PartnerStore   { return (*partnerStore)(s) }
+func (s *Store) Sync() store.SyncStore          { return (*syncStore)(s) }
 
 func (s *Store) init() error {
 	statements := []string{
@@ -234,6 +237,40 @@ func (s *Store) init() error {
 			key VARCHAR PRIMARY KEY,
 			value VARCHAR NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS stacks (
+			id VARCHAR PRIMARY KEY,
+			owner_id VARCHAR NOT NULL,
+			primary_asset_id VARCHAR,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS stack_assets (
+			stack_id VARCHAR NOT NULL,
+			asset_id VARCHAR NOT NULL,
+			position INTEGER NOT NULL,
+			PRIMARY KEY (stack_id, asset_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS partners (
+			id VARCHAR PRIMARY KEY,
+			owner_id VARCHAR NOT NULL,
+			user_id VARCHAR NOT NULL,
+			in_timeline BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS partners_pair_idx ON partners (owner_id, user_id)`,
+		`CREATE TABLE IF NOT EXISTS sync_deletes (
+			entity_type VARCHAR NOT NULL,
+			entity_id VARCHAR NOT NULL,
+			update_id BIGINT NOT NULL,
+			PRIMARY KEY (entity_type, entity_id)
+		)`,
+		// Incremental sync watermarks.
+		`CREATE SEQUENCE IF NOT EXISTS update_id_seq START 1`,
+		`ALTER TABLE assets ADD COLUMN IF NOT EXISTS update_id BIGINT DEFAULT 0`,
+		`ALTER TABLE albums ADD COLUMN IF NOT EXISTS update_id BIGINT DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS update_id BIGINT DEFAULT 0`,
+		`ALTER TABLE memories ADD COLUMN IF NOT EXISTS update_id BIGINT DEFAULT 0`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.Exec(stmt); err != nil {

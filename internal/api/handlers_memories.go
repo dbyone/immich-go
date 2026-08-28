@@ -67,9 +67,27 @@ func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
 		s.storeError(w, err)
 		return
 	}
+	// isUpcoming: memories never shown yet (seenAt unset). page: 1-based
+	// pagination with the upstream default page size.
+	isUpcoming := r.URL.Query().Get("isUpcoming") == "true"
+	page := 1
+	if v := r.URL.Query().Get("page"); v != "" {
+		if parsed, err := parseToInt64(v); err == nil && parsed > 0 {
+			page = int(parsed)
+		}
+	}
+	const pageSize = 100
 	out := make([]MemoryResponse, 0, len(memories))
+	shown := 0
 	for _, m := range memories {
-		out = append(out, s.memoryResponse(r, m))
+		if isUpcoming && m.SeenAt != nil {
+			continue
+		}
+		shown++
+		start := (page-1)*pageSize + 1
+		if shown >= start && shown < start+pageSize {
+			out = append(out, s.memoryResponse(r, m))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
