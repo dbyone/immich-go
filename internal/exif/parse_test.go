@@ -27,12 +27,12 @@ func TestRoundTripLittleEndian(t *testing.T) {
 	jpg := exiftest.BuildJPEG(exiftest.Options{
 		Width: 4032, Height: 3024,
 		Make: "Canon", Model: "EOS R5", LensModel: "RF 50mm F1.2",
-		Description:    "Shanghai skyline at dusk",
-		Orientation:    6, // rotate 90 CW
-		Rating:         4,
+		Description:      "Shanghai skyline at dusk",
+		Orientation:      6, // rotate 90 CW
+		Rating:           4,
 		DateTimeOriginal: &taken,
-		Latitude:       &lat,
-		Longitude:      &lon,
+		Latitude:         &lat,
+		Longitude:        &lon,
 	})
 
 	d := mustParse(t, jpg)
@@ -115,9 +115,9 @@ func TestGarbageInput(t *testing.T) {
 	cases := [][]byte{
 		{},
 		{0xFF, 0xD8},
-		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x02},            // truncated APP1
-		{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 'J', 'F'},  // JFIF only
-		[]byte("Exif\x00\x00MM"),                        // truncated TIFF
+		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x02}, // truncated APP1
+		{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 'J', 'F'}, // JFIF only
+		[]byte("Exif\x00\x00MM"),                       // truncated TIFF
 		{0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x08, 'E', 'x', 'i', 'f', 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
 	}
 	for i, c := range cases {

@@ -41,11 +41,11 @@ func BuildMP4(o Options) []byte {
 	const timescale = 1000
 
 	mvhd := box("mvhd", concat(
-		u32(0),             // version 0 / flags
-		u32(0), u32(0),     // creation / modification
-		u32(timescale),     // movie timescale
+		u32(0),         // version 0 / flags
+		u32(0), u32(0), // creation / modification
+		u32(timescale), // movie timescale
 		u32(uint32(o.DurationMs)),
-		make([]byte, 64),   // rate/volume/matrix/next-track filler
+		make([]byte, 64), // rate/volume/matrix/next-track filler
 	))
 
 	videoTrak := box("trak", concat(
@@ -126,11 +126,11 @@ func tkhdBox(width, height, rotation int) []byte {
 	payload := concat(
 		u32(0x00000003), // version 0, flags: track_enabled|in_movie
 		u32(0), u32(0),  // creation / modification
-		u32(1), u32(0),  // track id / reserved
+		u32(1), u32(0), // track id / reserved
 		u32(10_000),     // duration (movie units; unused by the parser)
 		make([]byte, 8), // reserved
 		u16(0), u16(0),  // layer / alternate group
-		u16(0), u16(0),  // volume / reserved
+		u16(0), u16(0), // volume / reserved
 	)
 	payload = append(payload, rotationMatrix(rotation)...)
 	payload = append(payload, u32(fixed16(width))...)
@@ -164,21 +164,21 @@ func rotationMatrix(deg int) []byte {
 
 func hdlrBox(handler string) []byte {
 	return box("hdlr", concat(
-		u32(0),                 // version / flags
-		u32(0),                 // pre_defined
-		[]byte(handler),        // handler_type
-		make([]byte, 12),       // reserved
-		[]byte{0},              // name (empty, NUL-terminated)
+		u32(0),           // version / flags
+		u32(0),           // pre_defined
+		[]byte(handler),  // handler_type
+		make([]byte, 12), // reserved
+		[]byte{0},        // name (empty, NUL-terminated)
 	))
 }
 
 func mdhdBox(durationMs int64) []byte {
 	return box("mdhd", concat(
-		u32(0),                        // version 0 / flags
-		u32(0), u32(0),                // creation / modification
-		u32(1000),                     // media timescale
-		u32(uint32(durationMs)),       // duration in timescale units
-		u16(0x55C4), u16(0),           // language (und) / pre_defined
+		u32(0),         // version 0 / flags
+		u32(0), u32(0), // creation / modification
+		u32(1000),               // media timescale
+		u32(uint32(durationMs)), // duration in timescale units
+		u16(0x55C4), u16(0),     // language (und) / pre_defined
 	))
 }
 
@@ -186,12 +186,12 @@ func mdhdBox(durationMs int64) []byte {
 // offsets 32/34 per the ISO spec.
 func videoSTSD(fourcc string, width, height int) []byte {
 	entry := concat(
-		u32(36),                 // entry size (self-inclusive)
-		[]byte(fourcc),          // format
-		make([]byte, 6),         // reserved
-		u16(1),                  // data_reference_index
-		u16(0), u16(0),          // pre_defined / reserved
-		make([]byte, 12),        // pre_defined[3]
+		u32(36),         // entry size (self-inclusive)
+		[]byte(fourcc),  // format
+		make([]byte, 6), // reserved
+		u16(1),          // data_reference_index
+		u16(0), u16(0),  // pre_defined / reserved
+		make([]byte, 12), // pre_defined[3]
 		u16(uint16(width)),
 		u16(uint16(height)),
 	)
@@ -207,10 +207,10 @@ func audioSTSD(fourcc string) []byte {
 		[]byte(fourcc),
 		make([]byte, 6),
 		u16(1),
-		make([]byte, 8),         // reserved[2]
-		u16(2), u16(16),         // channels / sample size
-		u32(0),                  // pre_defined
-		u32(44100<<16),          // sample rate (16.16)
+		make([]byte, 8), // reserved[2]
+		u16(2), u16(16), // channels / sample size
+		u32(0),         // pre_defined
+		u32(44100<<16), // sample rate (16.16)
 	)
 	return box("stsd", concat(u32(0), u32(1), entry))
 }

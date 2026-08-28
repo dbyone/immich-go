@@ -55,9 +55,9 @@ type FaceRow struct {
 // a shared database (Attach) the store does not own — and never closes —
 // the connection; entity metadata lives in the same file.
 type Store struct {
-	db  *sql.DB // single-writer pool (all mutations and transactions)
-	ro  *sql.DB // read pool (may equal db; file-backed DBs get real parallelism)
-	dim int
+	db   *sql.DB // single-writer pool (all mutations and transactions)
+	ro   *sql.DB // read pool (may equal db; file-backed DBs get real parallelism)
+	dim  int
 	owns bool
 
 	mu          sync.Mutex // guards clustering/dedup recomputation
@@ -235,6 +235,20 @@ func (s *Store) DeleteSmartSearch(ctx context.Context, assetID string) error {
 	return err
 }
 
+// GetSmartSearch loads one asset's stored embedding (nil when absent).
+func (s *Store) GetSmartSearch(ctx context.Context, assetID string) ([]float32, error) {
+	var lit string
+	err := s.ro.QueryRowContext(ctx,
+		`SELECT CAST(embedding AS VARCHAR) FROM smart_search WHERE asset_id = ?`, assetID).Scan(&lit)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseVecLiteral(lit)
+}
+
 // SearchSmart returns the owner's assets ranked by cosine similarity to
 // the query vector, computed inside DuckDB.
 func (s *Store) SearchSmart(ctx context.Context, ownerID string, query []float32, limit int) ([]SmartHit, error) {
@@ -273,7 +287,7 @@ func (s *Store) SearchSmart(ctx context.Context, ownerID string, query []float32
 		return nil, err
 	}
 	type pair struct {
-		id string
+		id  string
 		vec []float32
 	}
 	items := make([]pair, 0, len(entries))

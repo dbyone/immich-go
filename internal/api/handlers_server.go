@@ -93,12 +93,12 @@ func (s *Server) serverConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, ServerConfigResponse{
-		IsInitialized:  count > 0,
-		IsOnboarded:    onboarded,
-		TrashDays:      30,
-		UserDeleteDelay: 7,
-		MinFaces:       s.minFaces(),
-		PublicUsers:    true,
+		IsInitialized:    count > 0,
+		IsOnboarded:      onboarded,
+		TrashDays:        30,
+		UserDeleteDelay:  7,
+		MinFaces:         s.minFaces(),
+		PublicUsers:      true,
 		MapLightStyleURL: "https://tiles.immich.cloud/v1/style/light.json",
 		MapDarkStyleURL:  "https://tiles.immich.cloud/v1/style/dark.json",
 		OAuthButtonText:  "Login with OAuth",
@@ -190,7 +190,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	out := map[string]QueueLegacyDTO{}
 	for name, q := range s.app.Jobs.Counts() {
 		out[name] = QueueLegacyDTO{
-			JobCounts: QueueCountsDTO(q.Counts),
+			JobCounts:   QueueCountsDTO(q.Counts),
 			QueueStatus: QueueStatusDTO(q.Status),
 		}
 	}
@@ -205,7 +205,7 @@ var manualJobs = map[string]bool{
 	"person-cleanup": true, "tag-cleanup": true, "user-cleanup": true,
 	"memory-cleanup": true, "memory-create": true, "backup-database": true,
 	// immich-go extensions driving the DuckDB vector pipeline:
-	"face-clustering": true, // DBSCAN over face_search -> people
+	"face-clustering":   true, // DBSCAN over face_search -> people
 	"detect-duplicates": true, // CLIP near-duplicate groups
 }
 

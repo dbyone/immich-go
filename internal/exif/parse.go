@@ -18,18 +18,18 @@ import (
 
 // Data carries the tags the server persists in asset_exifs.
 type Data struct {
-	Make         string
-	Model        string
-	LensModel    string
-	Description  string
-	Rating       *int
-	Orientation  int // EXIF orientation 1-8; 0 when absent
-	Width        int // PixelXDimension
-	Height       int // PixelYDimension
-	DateTimeOriginal *time.Time
+	Make               string
+	Model              string
+	LensModel          string
+	Description        string
+	Rating             *int
+	Orientation        int // EXIF orientation 1-8; 0 when absent
+	Width              int // PixelXDimension
+	Height             int // PixelYDimension
+	DateTimeOriginal   *time.Time
 	OffsetTimeOriginal string // e.g. "+08:00"
-	Latitude     *float64
-	Longitude    *float64
+	Latitude           *float64
+	Longitude          *float64
 }
 
 // ParseFile reads the EXIF block of a file on disk.

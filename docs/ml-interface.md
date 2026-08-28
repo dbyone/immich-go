@@ -59,3 +59,49 @@ services:
 ```
 
 模型权重在 ML 容器首次推理时自动下载；两容器无需任何代码耦合。
+
+---
+
+## 可插拔 Provider：mt-photos-ai 方言
+
+`IMMICH_MACHINE_LEARNING_PROVIDER=mtphotos` 将 AI 后端切换为开源边车
+[mt-photos-ai](https://github.com/MT-Photos/mt-photos-ai)（Chinese-CLIP ViT-B-16 +
+RapidOCR）。两个方言实现同一个 `internal/ml.Provider` 接口，作业流水线无感知。
+
+### wire 契约（依据其 onnx/server.py 源码验证）
+
+| 端点 | 请求 | 响应 |
+|---|---|---|
+| `POST /check` | 仅 `api-key` 头 | `{"result":"pass",...}`；密钥错误 401 |
+| `POST /clip/img` | multipart `file` 字段 | `{"result":["0.33..."]}`（16 位小数字符串数组） |
+| `POST /clip/txt` | JSON `{"text":"..."}` | 同上 |
+| `POST /ocr` | multipart `file` 字段 | `{"result":{"texts":[],"scores":[],"boxes":[{x,y,width,height}]}}`（全字符串标量） |
+
+关键实现细节：
+
+- **鉴权头是 `api-key`**（FastAPI `Header(...)` 把 `api_key` 参数映射为该名），
+  值 = 边车容器的 `API_AUTH_KEY` 环境变量（immich-go 侧配
+  `IMMICH_MACHINE_LEARNING_API_KEY`）。
+- **失败也返回 HTTP 200**：`{"result":[],"msg":"..."}` —— 空 result 且带 msg
+  即为失败，适配器将其还原为错误（`decodeMTVector`/`mtEnvelope`）。
+- **没有人脸端点**：`DetectFaces` 返回 `ErrUnsupported`，上传流水线自动跳过
+  人脸作业（`SupportsFaces()=false`），人物聚类对 mtphotos 方言不可用。
+- 图片超 10000px 边车返回 `result:[]` + msg，同样按错误处理。
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `IMMICH_MACHINE_LEARNING_PROVIDER` | `immich` | `immich` 或 `mtphotos` |
+| `IMMICH_MACHINE_LEARNING_API_KEY` | — | mtphotos 方言的 `API_AUTH_KEY` |
+
+> 切换方言后向量语义不同，需对存量资产重新触发 smart-search
+> （`POST /api/assets/{id}/refresh` 扩展端点）。
+
+## 场景分类（零样本打标）
+
+`internal/classify` 以 `IMMICH_SCENE_CLASSIFICATION_ENABLED=true` 启用：
+smart-search 作业写入向量后顺手对比内置中英双语场景词表（约 90 类），
+余弦 ≥ 阈值（immich 0.24 / mtphotos 0.30，可配）的前 TopK 个标签写入
+层级标签 `场景/<中文>`；immich 方言嵌入英文提示词、mtphotos 方言嵌入中文
+（Chinese-CLIP 原生优势）。词表嵌入每进程仅做一次并缓存，无逐资产额外推理。

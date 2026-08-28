@@ -8,10 +8,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"immich-go/internal/auth"
+	"immich-go/internal/classify"
 	"immich-go/internal/config"
 	"immich-go/internal/crypto"
 	"immich-go/internal/domain"
@@ -29,11 +31,15 @@ import (
 type App struct {
 	Cfg     *config.Config
 	Store   store.Store
-	ML      *ml.Client
+	ML      ml.Provider
 	Jobs    *jobs.System
 	Auth    *auth.Service
 	Storage *storage.Storage
 	Log     *slog.Logger
+
+	// Classifier turns stored CLIP embeddings into hierarchical scene
+	// tags ("场景/<label>"); nil when scene classification is disabled.
+	Classifier *classify.Classifier
 
 	// Vectors is the DuckDB-backed vector store replacing the upstream
 	// pgvector layer: CLIP embeddings, face embeddings, people clusters.
@@ -64,13 +70,6 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 	stg, err := storage.New(cfg.MediaLocation)
 	if err != nil {
 		return nil, err
-	}
-	mlCfg := ml.Config{
-		Enabled:            cfg.MachineLearning.Enabled,
-		URLs:               cfg.MachineLearning.URLs,
-		AvailabilityChecks: cfg.MachineLearning.AvailabilityChecks.Enabled,
-		CheckTimeout:       cfg.MachineLearning.AvailabilityChecks.Timeout,
-		CheckInterval:      cfg.MachineLearning.AvailabilityChecks.Interval,
 	}
 
 	// One DuckDB database holds everything: entity metadata and vectors.
@@ -107,9 +106,17 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		"entities", storeKind(st), "sqlCosine", vectors.HasSQLCosine())
 
 	a := &App{
-		Cfg:     cfg,
-		Store:   st,
-		ML:      ml.NewClient(mlCfg, log),
+		Cfg:   cfg,
+		Store: st,
+		ML: ml.NewProvider(ml.ProviderConfig{
+			Provider:           cfg.MachineLearning.Provider,
+			Enabled:            cfg.MachineLearning.Enabled,
+			URLs:               cfg.MachineLearning.URLs,
+			APIKey:             cfg.MachineLearning.APIKey,
+			AvailabilityChecks: cfg.MachineLearning.AvailabilityChecks.Enabled,
+			CheckTimeout:       cfg.MachineLearning.AvailabilityChecks.Timeout,
+			CheckInterval:      cfg.MachineLearning.AvailabilityChecks.Interval,
+		}, log),
 		Jobs:    jobs.NewSystem(log),
 		Auth:    auth.NewService(st),
 		Storage: stg,
@@ -117,6 +124,12 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 		Vectors: vectors,
 		db:      db,
 		ro:      ro,
+	}
+	if cfg.MachineLearning.SceneClassification.Enabled && cfg.MachineLearning.Clip.Enabled {
+		a.Classifier = classify.New(a.ML, classify.Options{
+			Threshold: cfg.MachineLearning.SceneClassification.Threshold,
+			TopK:      cfg.MachineLearning.SceneClassification.TopK,
+		})
 	}
 	a.Auth.SetSessionTTL(cfg.SessionTTL)
 	a.registerJobs()
@@ -316,10 +329,10 @@ func (a *App) handleExtractMetadata(ctx context.Context, _ string, data any) err
 
 	_ = a.Jobs.Queue(jobs.JobAssetGenerateThumbnails, assetJobData{AssetID: asset.ID})
 	if a.ML != nil && a.Cfg.MachineLearning.Enabled {
-		if a.Cfg.MachineLearning.Clip.Enabled && asset.Type == domain.AssetImage {
+		if a.Cfg.MachineLearning.Clip.Enabled && a.ML.SupportsCLIP() && asset.Type == domain.AssetImage {
 			_ = a.Jobs.Queue(jobs.JobSmartSearchRun, assetJobData{AssetID: asset.ID})
 		}
-		if a.Cfg.MachineLearning.FacialRecognition.Enabled && asset.Type == domain.AssetImage {
+		if a.Cfg.MachineLearning.FacialRecognition.Enabled && a.ML.SupportsFaces() && asset.Type == domain.AssetImage {
 			_ = a.Jobs.Queue(jobs.JobAssetDetectFaces, assetJobData{AssetID: asset.ID})
 		}
 	}
@@ -404,6 +417,9 @@ func (a *App) handleSmartSearch(ctx context.Context, _ string, data any) error {
 	if err != nil {
 		return err
 	}
+	if !a.ML.SupportsCLIP() {
+		return ml.ErrUnsupported
+	}
 	vec, err := a.ML.EncodeImage(ctx, asset.OriginalPath, a.Cfg.MachineLearning.Clip.ModelName)
 	if err != nil {
 		return fmt.Errorf("smart search embedding: %w", err)
@@ -419,11 +435,55 @@ func (a *App) handleSmartSearch(ctx context.Context, _ string, data any) error {
 		a.Cfg.MachineLearning.Clip.ModelName, vec); err != nil {
 		return fmt.Errorf("vector upsert: %w", err)
 	}
+	// Zero-shot scene tagging rides on the freshly stored embedding: the
+	// classifier only calls the provider to embed its label taxonomy once.
+	if a.Classifier != nil {
+		if err := a.applySceneTags(ctx, asset, vec); err != nil {
+			a.Log.Warn("scene classification failed", "asset", asset.ID, "err", err)
+		}
+	}
 	if a.Cfg.MachineLearning.DuplicateDetection.Enabled {
 		a.scheduleDuplicateDetection()
 	}
 	return nil
 }
+
+// applySceneTags files the asset under hierarchical "场景/<label>" tags
+// and removes stale scene tags that no longer clear the threshold.
+func (a *App) applySceneTags(ctx context.Context, asset *domain.Asset, vec []float32) error {
+	scores, err := a.Classifier.Classify(ctx, vec)
+	if err != nil {
+		return err
+	}
+	want := map[string]bool{}
+	for _, s := range scores {
+		tag, err := a.Store.Tags().UpsertValue(ctx, asset.OwnerID, sceneTagPrefix+s.Label.ZH)
+		if err != nil {
+			return err
+		}
+		if _, err := a.Store.Tags().Attach(ctx, tag.ID, []string{asset.ID}); err != nil {
+			return err
+		}
+		want[tag.ID] = true
+	}
+	current, err := a.Store.Tags().ListForAsset(ctx, asset.ID)
+	if err != nil {
+		return err
+	}
+	for _, tag := range current {
+		if !strings.HasPrefix(tag.Value, sceneTagPrefix) || want[tag.ID] {
+			continue
+		}
+		if _, err := a.Store.Tags().Detach(ctx, tag.ID, []string{asset.ID}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sceneTagPrefix namespaces auto-generated scene tags so they never
+// collide with user tags.
+const sceneTagPrefix = "场景/"
 
 func (a *App) handleDetectFaces(ctx context.Context, _ string, data any) error {
 	id, err := jobAssetID(data)
@@ -433,6 +493,11 @@ func (a *App) handleDetectFaces(ctx context.Context, _ string, data any) error {
 	asset, err := a.Store.Assets().Get(ctx, id)
 	if err != nil {
 		return err
+	}
+	if !a.ML.SupportsFaces() {
+		// The configured AI provider (e.g. mt-photos-ai) has no face
+		// endpoints; skip cleanly instead of failing the queue.
+		return nil
 	}
 	res, err := a.ML.DetectFaces(ctx, asset.OriginalPath, ml.FaceDetectionOptions{
 		ModelName: a.Cfg.MachineLearning.FacialRecognition.ModelName,
@@ -609,6 +674,9 @@ func (a *App) handleOCR(ctx context.Context, _ string, data any) error {
 		return err
 	}
 	if !a.Cfg.MachineLearning.OCR.Enabled {
+		return nil
+	}
+	if !a.ML.SupportsOCR() {
 		return nil
 	}
 	_, err = a.ML.OCR(ctx, asset.OriginalPath, ml.OCROptions{

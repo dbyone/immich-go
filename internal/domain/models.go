@@ -42,15 +42,15 @@ type User struct {
 }
 
 type Session struct {
-	ID          string
-	TokenHash   []byte // SHA-256 of the opaque access token handed to the client
-	UserID      string
-	DeviceOS    string
-	DeviceType  string
-	AppVersion  string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	ExpiresAt   *time.Time
+	ID         string
+	TokenHash  []byte // SHA-256 of the opaque access token handed to the client
+	UserID     string
+	DeviceOS   string
+	DeviceType string
+	AppVersion string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	ExpiresAt  *time.Time
 }
 
 type APIKey struct {
@@ -198,6 +198,20 @@ type Partner struct {
 	InTimeline bool
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+}
+
+// Tag is a hierarchical label ("场景/海滩"): Name is one path segment,
+// Value the full slash-joined path, ParentID links to the parent tag.
+type Tag struct {
+	ID        string
+	UserID    string
+	Name      string // single segment, never contains "/"
+	Value     string // full path, e.g. "场景/海滩"
+	Color     *string
+	ParentID  *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	UpdateID  int64
 }
 
 // SyncDelete is a tombstone emitted when a synced entity goes away.

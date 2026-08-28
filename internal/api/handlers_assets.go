@@ -592,3 +592,63 @@ func (s *Server) serveAssetFile(w http.ResponseWriter, r *http.Request, path, co
 	}
 	http.ServeContent(w, r, "", time.Time{}, f)
 }
+
+// refreshAsset re-runs the post-upload pipeline for one asset: EXIF /
+// video metadata first, which fans out to thumbnails, smart search (and
+// scene classification) and face detection. immich-go extension backing
+// a per-photo refresh affordance.
+func (s *Server) refreshAsset(w http.ResponseWriter, r *http.Request) {
+	a := caller(w, r)
+	if a == nil {
+		return
+	}
+	asset, err := s.app.Store.Assets().Get(r.Context(), chiURLParam(r, "id"))
+	if err != nil || asset.OwnerID != a.User.ID {
+		writeError(w, http.StatusNotFound, "Not found")
+		return
+	}
+	s.app.QueueAssetPipeline(asset.ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// assetClassification scores one asset against the scene taxonomy live,
+// reading the stored CLIP embedding — no persistence, no extra model
+// calls beyond the cached label embeddings. immich-go extension.
+func (s *Server) assetClassification(w http.ResponseWriter, r *http.Request) {
+	a := caller(w, r)
+	if a == nil {
+		return
+	}
+	if s.app.Classifier == nil {
+		writeError(w, http.StatusBadRequest, "Scene classification is disabled")
+		return
+	}
+	asset, err := s.app.Store.Assets().Get(r.Context(), chiURLParam(r, "id"))
+	if err != nil || asset.OwnerID != a.User.ID {
+		writeError(w, http.StatusNotFound, "Not found")
+		return
+	}
+	vec, err := s.app.Vectors.GetSmartSearch(r.Context(), asset.ID)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	if vec == nil {
+		writeError(w, http.StatusNotFound, "No embedding for asset")
+		return
+	}
+	scores, err := s.app.Classifier.Classify(r.Context(), vec)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Classification failed: "+err.Error())
+		return
+	}
+	type entry struct {
+		Label string  `json:"label"`
+		Score float64 `json:"score"`
+	}
+	out := []entry{}
+	for _, sc := range scores {
+		out = append(out, entry{Label: sc.Label.ZH, Score: sc.Score})
+	}
+	writeJSON(w, http.StatusOK, out)
+}

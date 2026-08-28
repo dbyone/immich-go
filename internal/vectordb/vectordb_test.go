@@ -89,8 +89,8 @@ func TestDBSCAN(t *testing.T) {
 	// Two tight groups plus a loner.
 	vectors := [][]float32{
 		{1, 0, 0}, {0.99, 0.02, 0}, {0.98, 0.01, 0.01}, // cluster A
-		{0, 1, 0}, {0.01, 0.99, 0},                     // cluster B
-		{0, 0, 1},                                       // noise
+		{0, 1, 0}, {0.01, 0.99, 0}, // cluster B
+		{0, 0, 1}, // noise
 	}
 	labels := DBSCAN(vectors, 0.1, 2)
 	if labels[0] != labels[1] || labels[1] != labels[2] {

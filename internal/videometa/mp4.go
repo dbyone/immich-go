@@ -18,7 +18,7 @@ type Info struct {
 	DurationMs  int64
 	Width       int
 	Height      int
-	RotationDeg int    // 0/90/180/270 from the track display matrix
+	RotationDeg int // 0/90/180/270 from the track display matrix
 	FPS         float64
 	VideoCodec  string // h264, hevc, av1, vp9, ...
 	AudioCodec  string // aac, opus, ...
@@ -327,11 +327,11 @@ func matrixRotation(m []byte) int {
 	}
 	a, b, c, d := read(0), read(1), read(3), read(4)
 	switch {
-	case a == 0 && b == 1<<16 && c == -(1 << 16) && d == 0:
+	case a == 0 && b == 1<<16 && c == -(1<<16) && d == 0:
 		return 90
-	case a == -(1 << 16) && b == 0 && c == 0 && d == -(1 << 16):
+	case a == -(1<<16) && b == 0 && c == 0 && d == -(1<<16):
 		return 180
-	case a == 0 && b == -(1 << 16) && c == 1<<16 && d == 0:
+	case a == 0 && b == -(1<<16) && c == 1<<16 && d == 0:
 		return 270
 	default:
 		return 0

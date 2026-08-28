@@ -14,8 +14,8 @@ import (
 // ---- search long tail ----
 
 type exploreItem struct {
-	Value string          `json:"value"`
-	Data  AssetResponse   `json:"data"`
+	Value string        `json:"value"`
+	Data  AssetResponse `json:"data"`
 }
 
 type exploreGroup struct {

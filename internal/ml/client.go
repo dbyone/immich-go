@@ -34,10 +34,10 @@ const (
 
 // ModelType values accepted inside the pipeline entries.
 const (
-	TypeDetection  = "detection"
+	TypeDetection   = "detection"
 	TypeRecognition = "recognition"
-	TypeTextual    = "textual"
-	TypeVisual     = "visual"
+	TypeTextual     = "textual"
+	TypeVisual      = "visual"
 )
 
 // PipelineEntry is one model invocation inside a predict request.
@@ -144,11 +144,11 @@ type OCRResult struct {
 
 // predictResponse covers every task's reply. Keys not requested stay zero.
 type predictResponse struct {
-	Clip              *string         `json:"clip"`
-	FacialRecognition []DetectedFace  `json:"facial-recognition"`
-	OCR               *OCRResult      `json:"ocr"`
-	ImageHeight       int             `json:"imageHeight"`
-	ImageWidth        int             `json:"imageWidth"`
+	Clip              *string        `json:"clip"`
+	FacialRecognition []DetectedFace `json:"facial-recognition"`
+	OCR               *OCRResult     `json:"ocr"`
+	ImageHeight       int            `json:"imageHeight"`
+	ImageWidth        int            `json:"imageWidth"`
 }
 
 // FaceDetectionResult is DetectFaces' normalized return value.

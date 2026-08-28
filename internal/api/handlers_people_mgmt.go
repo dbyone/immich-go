@@ -32,14 +32,14 @@ func personDetail(p *vectordb.Person) PersonDetail {
 		birth = &b
 	}
 	return PersonDetail{
-		BirthDate:  birth,
-		Color:      p.Color,
-		ID:         p.ID,
-		IsFavorite: p.IsFavorite,
-		IsHidden:   p.IsHidden,
-		Name:       p.Name,
+		BirthDate:     birth,
+		Color:         p.Color,
+		ID:            p.ID,
+		IsFavorite:    p.IsFavorite,
+		IsHidden:      p.IsHidden,
+		Name:          p.Name,
 		ThumbnailPath: "/api/people/" + p.ID + "/thumbnail",
-		UpdatedAt:  isoString(p.UpdatedAt),
+		UpdatedAt:     isoString(p.UpdatedAt),
 	}
 }
 

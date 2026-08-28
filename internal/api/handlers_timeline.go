@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"time"
@@ -217,6 +218,11 @@ type searchRequest struct {
 	State       string `json:"state"`
 	Make        string `json:"make"`
 	Model       string `json:"model"`
+	// MetadataSearchDto fields that power the folders/tags UIs and the
+	// MT-Photos-style file search.
+	OriginalFileName string   `json:"originalFileName"`
+	OriginalPath     string   `json:"originalPath"`
+	TagIDs           []string `json:"tagIds"`
 }
 
 func (s *Server) searchMetadata(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +236,9 @@ func (s *Server) searchMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
+	if len(req.TagIDs) > 0 {
+		assets = s.filterByTags(r.Context(), assets, req.TagIDs)
+	}
 	matches := s.applyMetadataFilters(assets, &req)
 	sort.SliceStable(matches, func(i, j int) bool { return matches[i].FileCreatedAt.After(matches[j].FileCreatedAt) })
 	page, size := pageParams(req.Page, req.Size)
@@ -277,6 +286,12 @@ func (s *Server) applyMetadataFilters(assets []*domain.Asset, req *searchRequest
 				continue
 			}
 		}
+		if req.OriginalFileName != "" && !contains(lower(a.OriginalFileName), lower(req.OriginalFileName)) {
+			continue
+		}
+		if req.OriginalPath != "" && !contains(lower(a.OriginalPath), lower(req.OriginalPath)) {
+			continue
+		}
 		if req.City != "" || req.Country != "" || req.State != "" || req.Make != "" || req.Model != "" {
 			if a.Exif == nil {
 				continue
@@ -305,7 +320,9 @@ func (s *Server) applyMetadataFilters(assets []*domain.Asset, req *searchRequest
 // searchSmart runs a CLIP text query against the machine-learning
 // service and ranks the owner's assets by cosine similarity inside the
 // DuckDB vector store — the same pipeline as SearchService.searchSmart
-// upstream, with pgvector replaced by DuckDB.
+// upstream, with pgvector replaced by DuckDB. immich-go extension:
+// assets whose file name or path contains the raw query rank ahead of
+// the vector hits, and the query works without any ML service at all.
 func (s *Server) searchSmart(w http.ResponseWriter, r *http.Request) {
 	a := caller(w, r)
 	if a == nil {
@@ -320,45 +337,117 @@ func (s *Server) searchSmart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "query is required")
 		return
 	}
-	if !s.app.Cfg.MachineLearning.Enabled || !s.app.Cfg.MachineLearning.Clip.Enabled {
+
+	mlReady := s.app.ML != nil &&
+		s.app.Cfg.MachineLearning.Enabled &&
+		s.app.Cfg.MachineLearning.Clip.Enabled &&
+		s.app.ML.SupportsCLIP()
+
+	type ranked struct {
+		asset *domain.Asset
+		score float64
+	}
+	entries := []ranked{}
+	seen := map[string]bool{}
+	q := lower(req.Query)
+
+	// Exact text matches first: file names and paths are precise signals
+	// (MT-Photos-style file search, also the no-ML fallback).
+	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	for _, asset := range assets {
+		if asset.DeletedAt != nil {
+			continue
+		}
+		if contains(lower(asset.OriginalFileName), q) || contains(lower(asset.OriginalPath), q) {
+			entries = append(entries, ranked{asset: asset, score: 1})
+			seen[asset.ID] = true
+		}
+	}
+
+	if mlReady {
+		queryVec, err := s.app.ML.EncodeText(r.Context(), req.Query, ml.TextOptions{
+			ModelName: s.app.Cfg.MachineLearning.Clip.ModelName,
+			Language:  req.Language,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Machine learning query failed: "+err.Error())
+			return
+		}
+		hits, err := s.app.Vectors.SearchSmart(r.Context(), a.User.ID, queryVec, 1000)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Vector search failed: "+err.Error())
+			return
+		}
+		for _, hit := range hits {
+			if seen[hit.AssetID] {
+				continue
+			}
+			asset, err := s.app.Store.Assets().Get(r.Context(), hit.AssetID)
+			if err != nil || asset.OwnerID != a.User.ID || asset.DeletedAt != nil {
+				continue
+			}
+			entries = append(entries, ranked{asset: asset, score: hit.Score})
+			seen[asset.ID] = true
+		}
+	} else if len(entries) == 0 {
+		// Preserve the upstream signal that smart search is unavailable
+		// when neither vector nor text matching produced anything.
 		writeError(w, http.StatusBadRequest, "Smart search is disabled")
-		return
-	}
-
-	queryVec, err := s.app.ML.EncodeText(r.Context(), req.Query, ml.TextOptions{
-		ModelName: s.app.Cfg.MachineLearning.Clip.ModelName,
-		Language:  req.Language,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Machine learning query failed: "+err.Error())
-		return
-	}
-
-	hits, err := s.app.Vectors.SearchSmart(r.Context(), a.User.ID, queryVec, 1000)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Vector search failed: "+err.Error())
 		return
 	}
 
 	page, size := pageParams(req.Page, req.Size)
 	start := (page - 1) * size
-	if start > len(hits) {
-		start = len(hits)
+	if start > len(entries) {
+		start = len(entries)
 	}
 	end := start + size
-	if end > len(hits) {
-		end = len(hits)
+	if end > len(entries) {
+		end = len(entries)
 	}
 
 	out := make([]AssetResponse, 0, end-start)
-	for _, hit := range hits[start:end] {
-		asset, err := s.app.Store.Assets().Get(r.Context(), hit.AssetID)
-		if err != nil || asset.OwnerID != a.User.ID {
-			continue
-		}
-		out = append(out, s.assetResponse(r.Context(), asset, req.WithExif))
+	for _, e := range entries[start:end] {
+		out = append(out, s.assetResponse(r.Context(), e.asset, req.WithExif))
 	}
 	writeJSON(w, http.StatusOK, SearchResponse{Albums: []AlbumResponse{}, Assets: out})
+}
+
+// filterByTags keeps assets linked to any of the given tags (ANY
+// semantics — a single filter value is the common case).
+func (s *Server) filterByTags(ctx context.Context, assets []*domain.Asset, tagIDs []string) []*domain.Asset {
+	idSet := map[string]bool{}
+	byAsset := map[string]bool{}
+	for _, id := range tagIDs {
+		idSet[id] = true
+	}
+	ids := make([]string, 0, len(assets))
+	for _, a := range assets {
+		ids = append(ids, a.ID)
+	}
+	linked, err := s.app.Store.Tags().ListForAssets(ctx, ids)
+	if err != nil {
+		return assets
+	}
+	for assetID, tags := range linked {
+		for _, t := range tags {
+			if idSet[t.ID] {
+				byAsset[assetID] = true
+				break
+			}
+		}
+	}
+	out := make([]*domain.Asset, 0, len(assets))
+	for _, a := range assets {
+		if byAsset[a.ID] {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func pageParams(page, size int) (int, int) {

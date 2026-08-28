@@ -42,15 +42,15 @@ type UserResponse struct {
 }
 
 type LoginResponse struct {
-	AccessToken           string       `json:"accessToken"`
-	UserID                string       `json:"userId"`
-	UserEmail             string       `json:"userEmail"`
-	Name                  string       `json:"name"`
-	ProfileImagePath      string       `json:"profileImagePath"`
-	IsAdmin               bool         `json:"isAdmin"`
-	ShouldChangePassword  bool         `json:"shouldChangePassword"`
-	IsOnboarded           bool         `json:"isOnboarded"`
-	User                  *UserResponse `json:"user,omitempty"`
+	AccessToken          string        `json:"accessToken"`
+	UserID               string        `json:"userId"`
+	UserEmail            string        `json:"userEmail"`
+	Name                 string        `json:"name"`
+	ProfileImagePath     string        `json:"profileImagePath"`
+	IsAdmin              bool          `json:"isAdmin"`
+	ShouldChangePassword bool          `json:"shouldChangePassword"`
+	IsOnboarded          bool          `json:"isOnboarded"`
+	User                 *UserResponse `json:"user,omitempty"`
 }
 
 type ValidateTokenResponse struct {
@@ -69,33 +69,33 @@ type AuthStatusResponse struct {
 }
 
 type SessionResponse struct {
-	ID                string   `json:"id"`
-	Token             string   `json:"token,omitempty"`
-	CreatedAt         ISOTime  `json:"createdAt"`
-	UpdatedAt         ISOTime  `json:"updatedAt"`
-	ExpiresAt         *ISOTime `json:"expiresAt,omitempty"`
-	Current           bool     `json:"current"`
-	DeviceOS          string   `json:"deviceOS"`
-	DeviceType        string   `json:"deviceType"`
-	AppVersion        *string  `json:"appVersion"`
-	IsPendingSyncReset bool    `json:"isPendingSyncReset"`
+	ID                 string   `json:"id"`
+	Token              string   `json:"token,omitempty"`
+	CreatedAt          ISOTime  `json:"createdAt"`
+	UpdatedAt          ISOTime  `json:"updatedAt"`
+	ExpiresAt          *ISOTime `json:"expiresAt,omitempty"`
+	Current            bool     `json:"current"`
+	DeviceOS           string   `json:"deviceOS"`
+	DeviceType         string   `json:"deviceType"`
+	AppVersion         *string  `json:"appVersion"`
+	IsPendingSyncReset bool     `json:"isPendingSyncReset"`
 }
 
 type APIKeyResponse struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Permissions []string  `json:"permissions"`
-	CreatedAt   ISOTime   `json:"createdAt"`
-	UpdatedAt   ISOTime   `json:"updatedAt"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Permissions []string `json:"permissions"`
+	CreatedAt   ISOTime  `json:"createdAt"`
+	UpdatedAt   ISOTime  `json:"updatedAt"`
 }
 
 type APIKeyCreateResponse struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Permissions []string       `json:"permissions"`
-	Secret      string         `json:"secret"`
-	CreatedAt   ISOTime        `json:"createdAt"`
-	UpdatedAt   ISOTime        `json:"updatedAt"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Permissions []string        `json:"permissions"`
+	Secret      string          `json:"secret"`
+	CreatedAt   ISOTime         `json:"createdAt"`
+	UpdatedAt   ISOTime         `json:"updatedAt"`
 	APIKey      *APIKeyResponse `json:"apiKey"`
 }
 
@@ -149,6 +149,18 @@ type AssetResponse struct {
 	LibraryID        *string       `json:"libraryId,omitempty"`
 	DuplicateID      *string       `json:"duplicateId,omitempty"`
 	ExifInfo         *ExifResponse `json:"exifInfo,omitempty"`
+	Tags             []TagResponse `json:"tags"`
+}
+
+// TagResponse is the TagResponseDto wire shape.
+type TagResponse struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Value     string  `json:"value"`
+	Color     string  `json:"color,omitempty"`
+	ParentID  *string `json:"parentId,omitempty"`
+	CreatedAt ISOTime `json:"createdAt"`
+	UpdatedAt ISOTime `json:"updatedAt"`
 }
 
 type AssetMediaResponse struct {
@@ -168,22 +180,22 @@ type AlbumUserResponse struct {
 }
 
 type AlbumResponse struct {
-	ID                        string              `json:"id"`
-	AlbumName                 string              `json:"albumName"`
-	AlbumThumbnailAssetID     *string             `json:"albumThumbnailAssetId"`
-	AlbumUsers                []AlbumUserResponse `json:"albumUsers"`
-	AssetCount                int                 `json:"assetCount"`
-	CreatedAt                 ISOTime             `json:"createdAt"`
-	UpdatedAt                 ISOTime             `json:"updatedAt"`
-	StartDate                 *ISOTime            `json:"startDate,omitempty"`
-	EndDate                   *ISOTime            `json:"endDate,omitempty"`
-	LastModifiedAssetTimestamp *ISOTime           `json:"lastModifiedAssetTimestamp,omitempty"`
-	Description               string              `json:"description"`
-	HasSharedLink             bool                `json:"hasSharedLink"`
-	IsActivityEnabled         bool                `json:"isActivityEnabled"`
-	Shared                    bool                `json:"shared"`
-	Order                     string              `json:"order"`
-	Owner                     *UserResponse       `json:"owner"`
+	ID                         string              `json:"id"`
+	AlbumName                  string              `json:"albumName"`
+	AlbumThumbnailAssetID      *string             `json:"albumThumbnailAssetId"`
+	AlbumUsers                 []AlbumUserResponse `json:"albumUsers"`
+	AssetCount                 int                 `json:"assetCount"`
+	CreatedAt                  ISOTime             `json:"createdAt"`
+	UpdatedAt                  ISOTime             `json:"updatedAt"`
+	StartDate                  *ISOTime            `json:"startDate,omitempty"`
+	EndDate                    *ISOTime            `json:"endDate,omitempty"`
+	LastModifiedAssetTimestamp *ISOTime            `json:"lastModifiedAssetTimestamp,omitempty"`
+	Description                string              `json:"description"`
+	HasSharedLink              bool                `json:"hasSharedLink"`
+	IsActivityEnabled          bool                `json:"isActivityEnabled"`
+	Shared                     bool                `json:"shared"`
+	Order                      string              `json:"order"`
+	Owner                      *UserResponse       `json:"owner"`
 	// Assets is included by GET /albums/{id} for convenience; the columnar
 	// timeline endpoints are the canonical asset listing for clients.
 	Assets []AssetResponse `json:"assets,omitempty"`
@@ -196,9 +208,9 @@ type AlbumStatisticsResponse struct {
 }
 
 type BulkIDResponse struct {
-	ID     string `json:"id"`
-	Success bool  `json:"success"`
-	Error  string `json:"error,omitempty"`
+	ID           string `json:"id"`
+	Success      bool   `json:"success"`
+	Error        string `json:"error,omitempty"`
 	ErrorMessage string `json:"errorMessage,omitempty"`
 }
 
@@ -257,38 +269,38 @@ type ServerVersionHistoryResponse struct {
 }
 
 type ServerConfigResponse struct {
-	ExternalDomain               string `json:"externalDomain"`
-	IsInitialized                bool   `json:"isInitialized"`
-	IsOnboarded                  bool   `json:"isOnboarded"`
-	LoginPageMessage             string `json:"loginPageMessage"`
-	MaintenanceMode              bool   `json:"maintenanceMode"`
-	MapDarkStyleURL              string `json:"mapDarkStyleUrl"`
-	MapLightStyleURL             string `json:"mapLightStyleUrl"`
-	MinFaces                     int    `json:"minFaces"`
-	OAuthAccountManagementURL    string `json:"oauthAccountManagementUrl"`
-	OAuthButtonText              string `json:"oauthButtonText"`
-	PublicUsers                  bool   `json:"publicUsers"`
-	TrashDays                    int    `json:"trashDays"`
-	UserDeleteDelay              int    `json:"userDeleteDelay"`
+	ExternalDomain            string `json:"externalDomain"`
+	IsInitialized             bool   `json:"isInitialized"`
+	IsOnboarded               bool   `json:"isOnboarded"`
+	LoginPageMessage          string `json:"loginPageMessage"`
+	MaintenanceMode           bool   `json:"maintenanceMode"`
+	MapDarkStyleURL           string `json:"mapDarkStyleUrl"`
+	MapLightStyleURL          string `json:"mapLightStyleUrl"`
+	MinFaces                  int    `json:"minFaces"`
+	OAuthAccountManagementURL string `json:"oauthAccountManagementUrl"`
+	OAuthButtonText           string `json:"oauthButtonText"`
+	PublicUsers               bool   `json:"publicUsers"`
+	TrashDays                 int    `json:"trashDays"`
+	UserDeleteDelay           int    `json:"userDeleteDelay"`
 }
 
 type ServerFeaturesResponse struct {
-	ConfigFile         bool `json:"configFile"`
-	DuplicateDetection bool `json:"duplicateDetection"`
-	Email              bool `json:"email"`
-	FacialRecognition  bool `json:"facialRecognition"`
-	ImportFaces        bool `json:"importFaces"`
-	Map                bool `json:"map"`
-	OAuth              bool `json:"oauth"`
-	OAuthAutoLaunch    bool `json:"oauthAutoLaunch"`
-	OCR                bool `json:"ocr"`
-	PasswordLogin      bool `json:"passwordLogin"`
+	ConfigFile          bool `json:"configFile"`
+	DuplicateDetection  bool `json:"duplicateDetection"`
+	Email               bool `json:"email"`
+	FacialRecognition   bool `json:"facialRecognition"`
+	ImportFaces         bool `json:"importFaces"`
+	Map                 bool `json:"map"`
+	OAuth               bool `json:"oauth"`
+	OAuthAutoLaunch     bool `json:"oauthAutoLaunch"`
+	OCR                 bool `json:"ocr"`
+	PasswordLogin       bool `json:"passwordLogin"`
 	RealtimeTranscoding bool `json:"realtimeTranscoding"`
-	ReverseGeocoding   bool `json:"reverseGeocoding"`
-	Search             bool `json:"search"`
-	Sidecar            bool `json:"sidecar"`
-	SmartSearch        bool `json:"smartSearch"`
-	Trash              bool `json:"trash"`
+	ReverseGeocoding    bool `json:"reverseGeocoding"`
+	Search              bool `json:"search"`
+	Sidecar             bool `json:"sidecar"`
+	SmartSearch         bool `json:"smartSearch"`
+	Trash               bool `json:"trash"`
 }
 
 type ServerMediaTypesResponse struct {
@@ -298,31 +310,31 @@ type ServerMediaTypesResponse struct {
 }
 
 type ServerStatsResponse struct {
-	Photos       int64                 `json:"photos"`
-	Videos       int64                 `json:"videos"`
-	Usage        int64                 `json:"usage"`
-	UsagePhotos  int64                 `json:"usagePhotos"`
-	UsageVideos  int64                 `json:"usageVideos"`
-	UsageByUser  []ServerUsageByUser   `json:"usageByUser"`
+	Photos      int64               `json:"photos"`
+	Videos      int64               `json:"videos"`
+	Usage       int64               `json:"usage"`
+	UsagePhotos int64               `json:"usagePhotos"`
+	UsageVideos int64               `json:"usageVideos"`
+	UsageByUser []ServerUsageByUser `json:"usageByUser"`
 }
 
 type ServerUsageByUser struct {
-	UserID       string `json:"userId"`
-	UserName     string `json:"userName"`
-	Photos       int64  `json:"photos"`
-	Videos       int64  `json:"videos"`
-	UsageBytes   int64  `json:"usage"`
-	QuotaBytes   int64  `json:"quotaSizeInBytes"`
+	UserID     string `json:"userId"`
+	UserName   string `json:"userName"`
+	Photos     int64  `json:"photos"`
+	Videos     int64  `json:"videos"`
+	UsageBytes int64  `json:"usage"`
+	QuotaBytes int64  `json:"quotaSizeInBytes"`
 }
 
 type ServerStorageResponse struct {
-	DiskAvailable      string  `json:"diskAvailable"`
-	DiskAvailableRaw   int64   `json:"diskAvailableRaw"`
-	DiskSize           string  `json:"diskSize"`
-	DiskSizeRaw        int64   `json:"diskSizeRaw"`
-	DiskUsagePercent   float64 `json:"diskUsagePercentage"`
-	DiskUse            string  `json:"diskUse"`
-	DiskUseRaw         int64   `json:"diskUseRaw"`
+	DiskAvailable    string  `json:"diskAvailable"`
+	DiskAvailableRaw int64   `json:"diskAvailableRaw"`
+	DiskSize         string  `json:"diskSize"`
+	DiskSizeRaw      int64   `json:"diskSizeRaw"`
+	DiskUsagePercent float64 `json:"diskUsagePercentage"`
+	DiskUse          string  `json:"diskUse"`
+	DiskUseRaw       int64   `json:"diskUseRaw"`
 }
 
 type QueueCountsDTO struct {
@@ -335,8 +347,8 @@ type QueueCountsDTO struct {
 }
 
 type QueueStatusDTO struct {
-	IsActive  bool `json:"isActive"`
-	IsPaused  bool `json:"isPaused"`
+	IsActive bool `json:"isActive"`
+	IsPaused bool `json:"isPaused"`
 }
 
 type QueueLegacyDTO struct {
@@ -345,22 +357,22 @@ type QueueLegacyDTO struct {
 }
 
 type ServerAboutResponse struct {
-	Version       string `json:"version"`
-	VersionURL    string `json:"versionUrl"`
-	Repository    string `json:"repository"`
-	RepositoryURL string `json:"repositoryUrl"`
-	Licensed      bool   `json:"licensed"`
-	Build         string `json:"build"`
-	BuildURL      string `json:"buildUrl"`
-	BuildImage    string `json:"buildImage"`
-	BuildImageURL string `json:"buildImageUrl"`
-	SourceCommit  string `json:"sourceCommit"`
-	SourceRef     string `json:"sourceRef"`
-	SourceURL     string `json:"sourceUrl"`
-	ThirdPartyBugFeatureURL string `json:"thirdPartyBugFeatureUrl"`
+	Version                    string `json:"version"`
+	VersionURL                 string `json:"versionUrl"`
+	Repository                 string `json:"repository"`
+	RepositoryURL              string `json:"repositoryUrl"`
+	Licensed                   bool   `json:"licensed"`
+	Build                      string `json:"build"`
+	BuildURL                   string `json:"buildUrl"`
+	BuildImage                 string `json:"buildImage"`
+	BuildImageURL              string `json:"buildImageUrl"`
+	SourceCommit               string `json:"sourceCommit"`
+	SourceRef                  string `json:"sourceRef"`
+	SourceURL                  string `json:"sourceUrl"`
+	ThirdPartyBugFeatureURL    string `json:"thirdPartyBugFeatureUrl"`
 	ThirdPartyDocumentationURL string `json:"thirdPartyDocumentationUrl"`
-	ThirdPartySourceURL string `json:"thirdPartySourceUrl"`
-	ThirdPartySupportURL string `json:"thirdPartySupportUrl"`
+	ThirdPartySourceURL        string `json:"thirdPartySourceUrl"`
+	ThirdPartySupportURL       string `json:"thirdPartySupportUrl"`
 }
 
 // assetResponse builds the wire representation of an asset.
@@ -389,6 +401,7 @@ func (s *Server) assetResponse(ctx context.Context, a *domain.Asset, withExif bo
 		Height:           a.Height,
 		Visibility:       a.Visibility,
 		Thumbhash:        nil,
+		Tags:             []TagResponse{},
 	}
 	if a.Thumbhash != "" {
 		resp.Thumbhash = &a.Thumbhash
@@ -428,7 +441,31 @@ func (s *Server) assetResponse(ctx context.Context, a *domain.Asset, withExif bo
 	if u, err := s.app.Store.Users().Get(ctx, a.OwnerID); err == nil {
 		resp.Owner = userResponsePtr(u)
 	}
+	// Tags ride on the asset row (upstream includes them in
+	// AssetResponseDto); a missing store leaves the empty array.
+	if s.app.Store != nil && s.app.Store.Tags() != nil {
+		if tags, err := s.app.Store.Tags().ListForAsset(ctx, a.ID); err == nil {
+			for _, t := range tags {
+				resp.Tags = append(resp.Tags, tagResponse(t))
+			}
+		}
+	}
 	return resp
+}
+
+func tagResponse(t *domain.Tag) TagResponse {
+	out := TagResponse{
+		ID:        t.ID,
+		Name:      t.Name,
+		Value:     t.Value,
+		ParentID:  t.ParentID,
+		CreatedAt: ISOTime(t.CreatedAt),
+		UpdatedAt: ISOTime(t.UpdatedAt),
+	}
+	if t.Color != nil {
+		out.Color = *t.Color
+	}
+	return out
 }
 
 func userResponse(u *domain.User) UserResponse {

@@ -117,10 +117,10 @@ func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAlbumRequest struct {
-	AlbumName  string `json:"albumName"`
-	Description string `json:"description"`
-	AssetIDs   []string `json:"assetIds"`
-	AlbumUsers []struct {
+	AlbumName   string   `json:"albumName"`
+	Description string   `json:"description"`
+	AssetIDs    []string `json:"assetIds"`
+	AlbumUsers  []struct {
 		Role   string `json:"role"`
 		UserID string `json:"userId"`
 	} `json:"albumUsers"`
@@ -189,11 +189,11 @@ func (s *Server) getAlbum(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateAlbumRequest struct {
-	AlbumName              *string `json:"albumName"`
-	Description            *string `json:"description"`
-	AlbumThumbnailAssetID  *string `json:"albumThumbnailAssetId"`
-	IsActivityEnabled      *bool   `json:"isActivityEnabled"`
-	Order                  *string `json:"order"`
+	AlbumName             *string `json:"albumName"`
+	Description           *string `json:"description"`
+	AlbumThumbnailAssetID *string `json:"albumThumbnailAssetId"`
+	IsActivityEnabled     *bool   `json:"isActivityEnabled"`
+	Order                 *string `json:"order"`
 }
 
 func (s *Server) updateAlbum(w http.ResponseWriter, r *http.Request) {

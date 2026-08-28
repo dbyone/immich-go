@@ -108,6 +108,30 @@ type PartnerStore interface {
 	ListSharedWith(ctx context.Context, userID string) ([]*domain.Partner, error)
 }
 
+// TagStore persists hierarchical tags and their asset links. Attach and
+// Detach stamp the affected assets' update_id so incremental sync
+// redelivers the asset (tags ride on the asset row, as upstream).
+type TagStore interface {
+	Create(ctx context.Context, t *domain.Tag) error
+	Update(ctx context.Context, t *domain.Tag) error
+	Delete(ctx context.Context, id string) error
+	Get(ctx context.Context, id string) (*domain.Tag, error)
+	GetByValue(ctx context.Context, userID, value string) (*domain.Tag, error)
+	ListForUser(ctx context.Context, userID string) ([]*domain.Tag, error)
+	// UpsertValue creates (with all missing parents) or returns the tag
+	// owning the exact value — upstream's upsertTags helper.
+	UpsertValue(ctx context.Context, userID, value string) (*domain.Tag, error)
+	// ListForAsset returns the tags linked to one asset.
+	ListForAsset(ctx context.Context, assetID string) ([]*domain.Tag, error)
+	// ListForAssets bulk-loads asset->tags in one round trip; assets
+	// without tags are simply absent from the map.
+	ListForAssets(ctx context.Context, assetIDs []string) (map[string][]*domain.Tag, error)
+	// Attach links and returns the number of newly linked pairs.
+	Attach(ctx context.Context, tagID string, assetIDs []string) (int, error)
+	// Detach unlinks and returns the number of removed pairs.
+	Detach(ctx context.Context, tagID string, assetIDs []string) (int, error)
+}
+
 // SyncStore serves the incremental sync stream: entities changed after a
 // watermark (update_id) plus tombstones for deleted ones.
 type SyncStore interface {
@@ -133,6 +157,7 @@ type Store interface {
 	Metadata() MetadataStore
 	Stacks() StackStore
 	Partners() PartnerStore
+	Tags() TagStore
 	Sync() SyncStore
 
 	// Close releases resources held by the store.

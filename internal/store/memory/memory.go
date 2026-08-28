@@ -8,25 +8,28 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"immich-go/internal/domain"
 	"immich-go/internal/store"
 )
 
 type Memory struct {
-	mu         sync.RWMutex
-	users      map[string]*domain.User
-	sessions   map[string]*domain.Session
-	apiKeys    map[string]*domain.APIKey
-	assets     map[string]*domain.Asset
-	albums     map[string]*domain.Album
-	memories   map[string]*domain.Memory
-	stacks     map[string]*domain.Stack
-	partners   map[string]*domain.Partner
-	syncAcks   map[string]map[string]bool // userID -> ack -> exists
-	meta       map[string]string
-	deletes    []domain.SyncDelete
-	updateSeq  atomic.Int64
+	mu        sync.RWMutex
+	users     map[string]*domain.User
+	sessions  map[string]*domain.Session
+	apiKeys   map[string]*domain.APIKey
+	assets    map[string]*domain.Asset
+	albums    map[string]*domain.Album
+	memories  map[string]*domain.Memory
+	stacks    map[string]*domain.Stack
+	partners  map[string]*domain.Partner
+	tags      map[string]*domain.Tag
+	tagLinks  map[string]time.Time       // "tagID|assetID" -> attached at
+	syncAcks  map[string]map[string]bool // userID -> ack -> exists
+	meta      map[string]string
+	deletes   []domain.SyncDelete
+	updateSeq atomic.Int64
 }
 
 func New() *Memory {
@@ -39,6 +42,8 @@ func New() *Memory {
 		memories: map[string]*domain.Memory{},
 		stacks:   map[string]*domain.Stack{},
 		partners: map[string]*domain.Partner{},
+		tags:     map[string]*domain.Tag{},
+		tagLinks: map[string]time.Time{},
 		syncAcks: map[string]map[string]bool{},
 		meta:     map[string]string{},
 	}
@@ -54,16 +59,20 @@ func (m *Memory) Albums() store.AlbumStore      { return (*albumStore)(m) }
 func (m *Memory) Memories() store.MemoryStore   { return (*memoryStore)(m) }
 func (m *Memory) SyncAcks() store.SyncAckStore  { return (*syncAckStore)(m) }
 func (m *Memory) Metadata() store.MetadataStore { return (*metadataStore)(m) }
-func (m *Memory) Stacks() store.StackStore     { return (*stackStore)(m) }
-func (m *Memory) Partners() store.PartnerStore { return (*partnerStore)(m) }
-func (m *Memory) Sync() store.SyncStore        { return (*syncStore)(m) }
+func (m *Memory) Stacks() store.StackStore      { return (*stackStore)(m) }
+func (m *Memory) Partners() store.PartnerStore  { return (*partnerStore)(m) }
+func (m *Memory) Sync() store.SyncStore         { return (*syncStore)(m) }
 
 // clone helpers keep references handed out of the store independent of the
 // stored copies, mirroring how a database returns fresh rows.
 
-func cloneUser(u *domain.User) *domain.User       { c := *u; return &c }
+func cloneUser(u *domain.User) *domain.User          { c := *u; return &c }
 func cloneSession(s *domain.Session) *domain.Session { c := *s; return &c }
-func cloneKey(k *domain.APIKey) *domain.APIKey    { c := *k; c.Permissions = append([]string(nil), k.Permissions...); return &c }
+func cloneKey(k *domain.APIKey) *domain.APIKey {
+	c := *k
+	c.Permissions = append([]string(nil), k.Permissions...)
+	return &c
+}
 
 func cloneAsset(a *domain.Asset) *domain.Asset {
 	c := *a

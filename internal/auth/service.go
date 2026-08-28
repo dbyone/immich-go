@@ -48,10 +48,10 @@ type LoginInput struct {
 }
 
 type LoginResult struct {
-	Token       string
-	SessionID   string
-	User        *domain.User
-	NewSession  *domain.Session
+	Token      string
+	SessionID  string
+	User       *domain.User
+	NewSession *domain.Session
 }
 
 // Login verifies credentials and opens a session, returning the opaque

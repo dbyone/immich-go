@@ -14,25 +14,25 @@ import (
 
 // QueueName values — the 19 queues of QueueName in server/src/enum.ts.
 const (
-	QueueThumbnailGeneration    = "thumbnailGeneration"
-	QueueMetadataExtraction     = "metadataExtraction"
-	QueueVideoConversion        = "videoConversion"
-	QueueFaceDetection          = "faceDetection"
-	QueueFacialRecognition      = "facialRecognition"
-	QueueSmartSearch            = "smartSearch"
-	QueueDuplicateDetection     = "duplicateDetection"
-	QueueBackgroundTask         = "backgroundTask"
+	QueueThumbnailGeneration      = "thumbnailGeneration"
+	QueueMetadataExtraction       = "metadataExtraction"
+	QueueVideoConversion          = "videoConversion"
+	QueueFaceDetection            = "faceDetection"
+	QueueFacialRecognition        = "facialRecognition"
+	QueueSmartSearch              = "smartSearch"
+	QueueDuplicateDetection       = "duplicateDetection"
+	QueueBackgroundTask           = "backgroundTask"
 	QueueStorageTemplateMigration = "storageTemplateMigration"
-	QueueMigration              = "migration"
-	QueueSearch                 = "search"
-	QueueSidecar                = "sidecar"
-	QueueLibrary                = "library"
-	QueueNotifications          = "notifications"
-	QueueBackupDatabase         = "backupDatabase"
-	QueueOCR                    = "ocr"
-	QueueWorkflow               = "workflow"
-	QueueIntegrityCheck         = "integrityCheck"
-	QueueEditor                 = "editor"
+	QueueMigration                = "migration"
+	QueueSearch                   = "search"
+	QueueSidecar                  = "sidecar"
+	QueueLibrary                  = "library"
+	QueueNotifications            = "notifications"
+	QueueBackupDatabase           = "backupDatabase"
+	QueueOCR                      = "ocr"
+	QueueWorkflow                 = "workflow"
+	QueueIntegrityCheck           = "integrityCheck"
+	QueueEditor                   = "editor"
 )
 
 // AllQueues in the stable order the legacy /api/jobs response expects.
@@ -85,8 +85,8 @@ type JobCounts struct {
 
 // QueueStatus is the QueueStatusLegacyDto shape.
 type QueueStatus struct {
-	IsActive  bool `json:"isActive"`
-	IsPaused  bool `json:"isPaused"`
+	IsActive bool `json:"isActive"`
+	IsPaused bool `json:"isPaused"`
 }
 
 type job struct {
@@ -98,11 +98,11 @@ type queue struct {
 	name       string
 	concurrent int
 
-	mu        sync.Mutex
-	waiting   []job
-	stats     JobCounts
-	paused    bool
-	wake      chan struct{}
+	mu      sync.Mutex
+	waiting []job
+	stats   JobCounts
+	paused  bool
+	wake    chan struct{}
 }
 
 func (q *queue) counts() (JobCounts, QueueStatus) {

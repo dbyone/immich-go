@@ -26,10 +26,17 @@ const (
 
 type MachineLearning struct {
 	Enabled bool
-	URLs    []string
+	// Provider selects the AI dialect: "immich" (default, the
+	// immich-machine-learning /ping + /predict contract) or "mtphotos"
+	// (the mt-photos-ai sidecar: api-key auth, /clip/*, /ocr — no faces).
+	Provider string
+	// APIKey is the mt-photos-ai sidecar's API_AUTH_KEY value
+	// (IMMICH_MACHINE_LEARNING_API_KEY); unused by the immich dialect.
+	APIKey             string
+	URLs               []string
 	AvailabilityChecks struct {
-		Enabled bool
-		Timeout time.Duration
+		Enabled  bool
+		Timeout  time.Duration
 		Interval time.Duration
 	}
 	Clip struct {
@@ -48,11 +55,19 @@ type MachineLearning struct {
 		MaxDistance float64 // CLIP distance below which assets are duplicates
 	}
 	OCR struct {
-		Enabled            bool
-		ModelName          string
-		MinDetectionScore  float64
+		Enabled             bool
+		ModelName           string
+		MinDetectionScore   float64
 		MinRecognitionScore float64
-		MaxResolution      int
+		MaxResolution       int
+	}
+	// SceneClassification is the MT-Photos-inspired zero-shot tagger:
+	// assets are matched against a built-in bilingual scene taxonomy via
+	// the CLIP provider and filed under hierarchical "场景/<label>" tags.
+	SceneClassification struct {
+		Enabled   bool
+		Threshold float64 // minimum cosine similarity to accept a label
+		TopK      int     // labels kept per asset
 	}
 }
 
@@ -149,6 +164,8 @@ func Load() *Config {
 
 	ml := &c.MachineLearning
 	ml.Enabled = envBool("IMMICH_MACHINE_LEARNING_ENABLED", true)
+	ml.Provider = strings.ToLower(env("IMMICH_MACHINE_LEARNING_PROVIDER", "immich"))
+	ml.APIKey = env("IMMICH_MACHINE_LEARNING_API_KEY", "")
 	ml.URLs = []string{env("IMMICH_MACHINE_LEARNING_URL", DefaultMachineLearningURL)}
 	ml.AvailabilityChecks.Enabled = envBool("IMMICH_MACHINE_LEARNING_AVAILABILITY_CHECK", true)
 	ml.AvailabilityChecks.Timeout = time.Duration(envInt("IMMICH_MACHINE_LEARNING_AVAILABILITY_CHECK_TIMEOUT", 2000)) * time.Millisecond
@@ -171,6 +188,16 @@ func Load() *Config {
 	ml.OCR.MinDetectionScore = envFloat("IMMICH_MACHINE_LEARNING_OCR_DETECT_SCORE", 0.5)
 	ml.OCR.MinRecognitionScore = envFloat("IMMICH_MACHINE_LEARNING_OCR_RECOGNIZE_SCORE", 0.8)
 	ml.OCR.MaxResolution = envInt("IMMICH_MACHINE_LEARNING_OCR_MAX_RESOLUTION", 736)
+
+	// Chinese-CLIP (mt-photos-ai) runs hotter than OpenAI CLIP; give it a
+	// higher acceptance threshold unless the operator overrides.
+	sceneThresholdDefault := 0.24
+	if ml.Provider == "mtphotos" {
+		sceneThresholdDefault = 0.30
+	}
+	ml.SceneClassification.Enabled = envBool("IMMICH_SCENE_CLASSIFICATION_ENABLED", false)
+	ml.SceneClassification.Threshold = envFloat("IMMICH_SCENE_CLASSIFICATION_THRESHOLD", sceneThresholdDefault)
+	ml.SceneClassification.TopK = envInt("IMMICH_SCENE_CLASSIFICATION_TOP_K", 3)
 
 	// Comma-separated extra URLs allow the multi-instance failover that the
 	// upstream repository supports.

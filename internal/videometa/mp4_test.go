@@ -87,7 +87,7 @@ func TestMP4RejectsGarbage(t *testing.T) {
 	cases := [][]byte{
 		{},
 		bytes.Repeat([]byte{0xFF}, 64),
-		[]byte("ftypisom"),               // not a real ftyp box
+		[]byte("ftypisom"),                // not a real ftyp box
 		{0, 0, 0, 20, 'f', 't', 'y', 'p'}, // truncated ftyp
 	}
 	for i, c := range cases {
@@ -101,9 +101,9 @@ func TestMP4MoovAfterMissingMdat(t *testing.T) {
 	// moov may appear anywhere; findMoov skips preceding boxes.
 	data := videotest.BuildMP4(videotest.Options{Width: 640, Height: 480, DurationMs: 2000, FPS: 24})
 	ftypLen := int(binary.BigEndian.Uint32(data[0:4]))
-	buf := append([]byte{}, data[:ftypLen]...)       // full ftyp box
+	buf := append([]byte{}, data[:ftypLen]...) // full ftyp box
 	buf = append(buf, boxForTest("mdat", []byte("junkjunk"))...)
-	buf = append(buf, data[ftypLen:]...)             // moov
+	buf = append(buf, data[ftypLen:]...) // moov
 	info := mustParseMP4(t, buf)
 	if info.Width != 640 || info.DurationMs != 2000 {
 		t.Fatalf("moov after mdat: %+v", info)
@@ -112,7 +112,7 @@ func TestMP4MoovAfterMissingMdat(t *testing.T) {
 
 func boxForTest(typ string, payload []byte) []byte {
 	box := make([]byte, 8+len(payload))
-	box[0], box[1], box[2] = 0, 0, byte((8 + len(payload)) >> 8)
+	box[0], box[1], box[2] = 0, 0, byte((8+len(payload))>>8)
 	box[3] = byte(8 + len(payload))
 	copy(box[4:8], typ)
 	copy(box[8:], payload)

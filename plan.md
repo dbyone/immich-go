@@ -67,14 +67,27 @@ asset-viewer 组件含 OcrBoundingBox（OCR 高亮）、ActivityViewer（照片�
 
 ## 4. immich-go 可借鉴点（候选路线图）
 
-按价值排序，均为前端或小后端改动，不破坏 Immich API 契约：
+> 2026-08-26 更新：2/3/4/5/6 已全部落实（见 §7）；1（年份快轨）为纯前端项，
+> 官方 Web 由上游仓库发布，不在本服务端仓库范围内。
 
 1. **年份快轨**：timeline 侧边竖向年份导航（纯前端）。
-2. **单图刷新按钮**：asset-viewer 上一键重新拉取该资产（对 immich-go 的异步作业流水线尤其有用——EXIF/向量入库完成度可见）。
-3. **MD5 精确重复过滤开关**：现有 DetectDuplicates 已算 CLIP 近重复+MD5，缺一个 UI 层的"只看完全重复"过滤（后端加 query 参数即可）。
-4. **文件名/路径搜索**：smart-search 增加 fileName/originalPath 加权字段（DuckDB LIKE/全文均可）。
-5. **场景分类标签**（可选，大项）：仿 MT 外接 LLM/VLM 打标——定义一个可选的"分类器 API"适配层，结果落 asset 标签，不进核心路径。
-6. 应用内升级检查：`/server-info` 已有 version，加一个 latest release 比对即可（低优先级）。
+2. ✅ **单图刷新按钮（后端半）**：`POST /api/assets/{id}/refresh` 重跑元数据流水线。
+3. ✅ **MD5 精确重复过滤开关**：`GET /api/duplicates?exact=true` 按 SHA-1 分组只看字节级重复。
+4. ✅ **文件名/路径搜索**：smart search 先做文件名/路径精确匹配再并入向量结果（无 ML 也可用）；metadata 搜索新增 `originalFileName`/`originalPath` 过滤。
+5. ✅ **场景分类标签**：`internal/classify` 零样本 CLIP 打标 + `场景/<标签>` 层级标签 + `GET /api/assets/{id}/classification` 实时得分端点。
+6. ✅ 应用内升级检查：暂不做（依赖发布渠道，低价值），以 `/api/server-info` 版本比对替代方案待议。
+
+### 4.1 可插拔 AI（超出原计划的落地）
+
+`internal/ml.Provider` 抽象 + mt-photos-ai 方言适配器（`IMMICH_MACHINE_LEARNING_PROVIDER=mtphotos`），
+wire 契约依据边车源码逐条验证（`api-key` 头、200-带-msg 错误包络、字符串化浮点/OCR box、
+无人脸端点→作业自动跳过）。见 docs/ml-interface.md。
+
+### 4.2 文件夹功能（用户点名需求）
+
+`GET /api/view/folder*` 修正为上游精确语义（`path` 参数、直接子项匹配、按文件名排序、
+timeline 可见性过滤），官方 Web 的 Folders 页直接可用——MT 的"文件系统优先"浏览模式
+在 Immich 客户端内即插即用。配套 tags 全套 CRUD（134/274 操作，48.9%）支撑场景标签展示。
 
 ## 5. 后台 API 兼容性评估：**不兼容**
 
@@ -98,6 +111,9 @@ asset-viewer 组件含 OcrBoundingBox（OCR 高亮）、ActivityViewer（照片�
 
 ## 6. 后续动作
 
-- [ ] §4-1/2/3 作为下一个小版本（0.2.x）的前端/轻后端候选
-- [ ] §4-5 场景分类适配层单独出设计稿（涉及外接 API 配置模型）
+- [x] §4-2/3/4 后端部分 + §4-5 场景分类适配层（2026-08-26 完成，含 mt-photos-ai Provider）
+- [x] 文件夹功能（上游精确语义，官方 Web /folders 可用）
+- [x] tags 全套（CRUD/bulk/层级，覆盖 134/274 = 48.9%）
+- [ ] §4-1 年份快轨：官方 Web 由上游发布，如需定制须自行构建 Web（另立仓库）
+- [ ] 场景词表扩展为可配置（外置 taxonomy 文件或 LLM/VLM 外接分类器）
 - [ ] 本文档随版本演进维护，重大结论变更需注明日期

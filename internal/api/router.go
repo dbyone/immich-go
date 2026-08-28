@@ -100,6 +100,12 @@ func (s *Server) Router() http.Handler {
 			r.With(s.perm("asset.delete")).Delete("/assets", s.bulkDeleteAssets)
 			r.With(s.perm("asset.read")).Get("/assets/{id}", s.getAsset)
 			r.With(s.perm("asset.update")).Put("/assets/{id}", s.updateAsset)
+			// immich-go extension: re-run the metadata pipeline for one
+			// asset (the backend half of MT Photos' per-photo refresh).
+			r.With(s.perm("asset.update")).Post("/assets/{id}/refresh", s.refreshAsset)
+			// immich-go extension: live zero-shot scene scores for one
+			// asset, recomputed from its stored CLIP embedding.
+			r.With(s.perm("asset.read")).Get("/assets/{id}/classification", s.assetClassification)
 			r.With(s.perm("asset.download")).Get("/assets/{id}/original", s.getAssetOriginal)
 			r.With(s.perm("asset.read")).Get("/assets/{id}/thumbnail", s.getAssetThumbnail)
 			r.With(s.perm("asset.read")).Get("/assets/{id}/video/playback", s.getAssetVideoPlayback)
@@ -138,6 +144,17 @@ func (s *Server) Router() http.Handler {
 			r.With(s.perm("asset.update")).Post("/duplicates/resolve", s.resolveDuplicates)
 			r.With(s.perm("asset.update")).Delete("/duplicates", s.deleteDuplicatesBulk)
 			r.With(s.perm("asset.update")).Delete("/duplicates/{id}", s.deleteDuplicateGroup)
+
+			// tags
+			r.With(s.perm("tag.read")).Get("/tags", s.listTags)
+			r.With(s.perm("tag.create")).Post("/tags", s.createTag)
+			r.With(s.perm("tag.create")).Put("/tags", s.upsertTags)
+			r.With(s.perm("tag.asset")).Put("/tags/assets", s.bulkTagAssets)
+			r.With(s.perm("tag.read")).Get("/tags/{id}", s.getTag)
+			r.With(s.perm("tag.update")).Put("/tags/{id}", s.updateTag)
+			r.With(s.perm("tag.delete")).Delete("/tags/{id}", s.deleteTag)
+			r.With(s.perm("tag.asset")).Put("/tags/{id}/assets", s.tagAssets)
+			r.With(s.perm("tag.asset")).Delete("/tags/{id}/assets", s.untagAssets)
 
 			// memories
 			r.With(s.perm("memory.read")).Get("/memories", s.listMemories)

@@ -78,17 +78,18 @@ func (s *Store) Close() error {
 	return nil
 }
 
-func (s *Store) Users() store.UserStore       { return (*userStore)(s) }
-func (s *Store) Sessions() store.SessionStore { return (*sessionStore)(s) }
-func (s *Store) APIKeys() store.APIKeyStore   { return (*apiKeyStore)(s) }
-func (s *Store) Assets() store.AssetStore     { return (*assetStore)(s) }
-func (s *Store) Albums() store.AlbumStore     { return (*albumStore)(s) }
-func (s *Store) Memories() store.MemoryStore    { return (*memoryStore)(s) }
-func (s *Store) SyncAcks() store.SyncAckStore   { return (*syncAckStore)(s) }
-func (s *Store) Metadata() store.MetadataStore  { return (*metadataStore)(s) }
-func (s *Store) Stacks() store.StackStore       { return (*stackStore)(s) }
-func (s *Store) Partners() store.PartnerStore   { return (*partnerStore)(s) }
-func (s *Store) Sync() store.SyncStore          { return (*syncStore)(s) }
+func (s *Store) Users() store.UserStore        { return (*userStore)(s) }
+func (s *Store) Sessions() store.SessionStore  { return (*sessionStore)(s) }
+func (s *Store) APIKeys() store.APIKeyStore    { return (*apiKeyStore)(s) }
+func (s *Store) Assets() store.AssetStore      { return (*assetStore)(s) }
+func (s *Store) Albums() store.AlbumStore      { return (*albumStore)(s) }
+func (s *Store) Memories() store.MemoryStore   { return (*memoryStore)(s) }
+func (s *Store) SyncAcks() store.SyncAckStore  { return (*syncAckStore)(s) }
+func (s *Store) Metadata() store.MetadataStore { return (*metadataStore)(s) }
+func (s *Store) Stacks() store.StackStore      { return (*stackStore)(s) }
+func (s *Store) Partners() store.PartnerStore  { return (*partnerStore)(s) }
+func (s *Store) Tags() store.TagStore          { return (*tagStore)(s) }
+func (s *Store) Sync() store.SyncStore         { return (*syncStore)(s) }
 
 func (s *Store) init() error {
 	statements := []string{
@@ -259,6 +260,26 @@ func (s *Store) init() error {
 			updated_at TIMESTAMP NOT NULL
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS partners_pair_idx ON partners (owner_id, user_id)`,
+		`CREATE TABLE IF NOT EXISTS tags (
+			id VARCHAR PRIMARY KEY,
+			user_id VARCHAR NOT NULL,
+			name VARCHAR NOT NULL,
+			value VARCHAR NOT NULL,
+			parent_id VARCHAR,
+			color VARCHAR,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			update_id BIGINT NOT NULL DEFAULT 0
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS tags_user_value_idx ON tags (user_id, value)`,
+		`CREATE INDEX IF NOT EXISTS tags_parent_idx ON tags (parent_id)`,
+		`CREATE TABLE IF NOT EXISTS tag_assets (
+			tag_id VARCHAR NOT NULL,
+			asset_id VARCHAR NOT NULL,
+			attached_at TIMESTAMP,
+			PRIMARY KEY (tag_id, asset_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS tag_assets_asset_idx ON tag_assets (asset_id)`,
 		`CREATE TABLE IF NOT EXISTS sync_deletes (
 			entity_type VARCHAR NOT NULL,
 			entity_id VARCHAR NOT NULL,

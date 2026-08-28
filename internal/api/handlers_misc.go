@@ -293,23 +293,77 @@ func (s *Server) reverseGeocode(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- folder view ----
+//
+// Contract mirrors upstream ViewService: the tree comes from distinct
+// directory paths of timeline-visible assets, and a folder query returns
+// the direct children only (no deeper descendants), ordered by file
+// name. Paths are normalized to forward slashes on every platform.
+
+// folderEligible matches the upstream visibility filter: timeline
+// visibility, not trashed, timestamps complete.
+func folderEligible(a *domain.Asset) bool {
+	return a.DeletedAt == nil &&
+		a.Visibility == domain.VisibilityTimeline &&
+		!a.FileCreatedAt.IsZero() &&
+		!a.FileModifiedAt.IsZero() &&
+		!a.LocalDateTime.IsZero()
+}
+
+// normFolderPath converts to forward slashes and strips outer slashes so
+// "/upload/a/b" and "upload/a/b" compare equal.
+func normFolderPath(p string) string {
+	return strings.Trim(filepath.ToSlash(p), "/")
+}
 
 func (s *Server) folderView(w http.ResponseWriter, r *http.Request) {
 	a := caller(w, r)
 	if a == nil {
 		return
 	}
-	prefix := r.URL.Query().Get("originalPath")
+	// The web SDK sends ?path=; accept the legacy originalPath alias for
+	// older consumers.
+	prefix := r.URL.Query().Get("path")
+	if prefix == "" {
+		prefix = r.URL.Query().Get("originalPath")
+	}
+	base := normFolderPath(prefix)
 	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
 		s.storeError(w, err)
 		return
 	}
-	out := []AssetResponse{}
+	type named struct {
+		name  string
+		asset *domain.Asset
+	}
+	matches := []named{}
 	for _, asset := range assets {
-		if asset.DeletedAt == nil && strings.HasPrefix(filepath.ToSlash(asset.OriginalPath), prefix) {
-			out = append(out, s.assetResponse(r.Context(), asset, false))
+		if !folderEligible(asset) {
+			continue
 		}
+		rel := normFolderPath(asset.OriginalPath)
+		var rest string
+		if base == "" {
+			rest = rel
+		} else if strings.HasPrefix(rel, base+"/") {
+			rest = strings.TrimPrefix(rel, base+"/")
+		} else {
+			continue
+		}
+		if strings.Contains(rest, "/") { // deeper descendant
+			continue
+		}
+		matches = append(matches, named{name: rest, asset: asset})
+	}
+	// Order by file name, the upstream regexp_replace basename sort.
+	for i := 1; i < len(matches); i++ {
+		for j := i; j > 0 && matches[j].name < matches[j-1].name; j-- {
+			matches[j], matches[j-1] = matches[j-1], matches[j]
+		}
+	}
+	out := []AssetResponse{}
+	for _, m := range matches {
+		out = append(out, s.assetResponse(r.Context(), m.asset, false))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -325,21 +379,26 @@ func (s *Server) folderUniquePaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seen := map[string]bool{}
-	var out []string
+	out := []string{}
 	for _, asset := range assets {
-		if asset.DeletedAt != nil {
+		if !folderEligible(asset) {
 			continue
 		}
-		// Normalize to forward slashes so the paths round-trip through the
-		// folder view endpoint on every platform.
-		dir := path.Dir(filepath.ToSlash(asset.OriginalPath))
+		slash := filepath.ToSlash(asset.OriginalPath)
+		dir := strings.TrimRight(path.Dir(slash), "/")
+		if dir == "." || dir == "" {
+			continue
+		}
 		if !seen[dir] {
 			seen[dir] = true
 			out = append(out, dir)
 		}
 	}
-	if out == nil {
-		out = []string{}
+	// Ascending, exactly like the upstream ORDER BY directoryPath.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j] < out[j-1]; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

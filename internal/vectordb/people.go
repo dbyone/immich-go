@@ -131,8 +131,8 @@ func (s *Store) MergePersons(ctx context.Context, targetID string, sourceIDs []s
 // ReassignEntry moves every face of an asset currently assigned to
 // fromPerson to toPerson ("" unassigns).
 type ReassignEntry struct {
-	AssetID   string
-	PersonID  string // destination, "" = unassign
+	AssetID  string
+	PersonID string // destination, "" = unassign
 }
 
 // ReassignFaces applies per-asset face moves; only faces belonging to

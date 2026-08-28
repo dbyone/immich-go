@@ -53,7 +53,10 @@ type DuplicateGroup struct {
 }
 
 // listDuplicates groups the owner's assets by duplicateId (assigned by the
-// duplicateDetection job over DuckDB CLIP embeddings).
+// duplicateDetection job over DuckDB CLIP embeddings). ?exact=true keeps
+// only the members sharing an identical checksum — MT Photos'
+// MD5-style exact-duplicate filter (immich-go extension); each checksum
+// class with two or more members becomes its own group.
 func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
 	a := caller(w, r)
 	if a == nil {
@@ -62,6 +65,7 @@ func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermission(w, r, "asset.read") {
 		return
 	}
+	exact := r.URL.Query().Get("exact") == "true"
 	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	if err != nil {
 		s.storeError(w, err)
@@ -78,11 +82,38 @@ func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
 		if len(members) < 2 {
 			continue
 		}
-		g := DuplicateGroup{ID: id, DuplicateCount: len(members)}
-		for _, m := range members {
-			g.Assets = append(g.Assets, s.assetResponse(r.Context(), m, false))
+		if exact {
+			for _, class := range groupByChecksum(members) {
+				out = append(out, s.duplicateGroupFor(r, id, class))
+			}
+			continue
 		}
-		out = append(out, g)
+		out = append(out, s.duplicateGroupFor(r, id, members))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) duplicateGroupFor(r *http.Request, id string, members []*domain.Asset) DuplicateGroup {
+	g := DuplicateGroup{ID: id, DuplicateCount: len(members)}
+	for _, m := range members {
+		g.Assets = append(g.Assets, s.assetResponse(r.Context(), m, false))
+	}
+	return g
+}
+
+// groupByChecksum buckets the members by identical checksum, keeping only
+// classes with two or more members.
+func groupByChecksum(members []*domain.Asset) [][]*domain.Asset {
+	classes := map[string][]*domain.Asset{}
+	for _, m := range members {
+		key := string(m.Checksum)
+		classes[key] = append(classes[key], m)
+	}
+	var out [][]*domain.Asset
+	for _, class := range classes {
+		if len(class) >= 2 {
+			out = append(out, class)
+		}
+	}
+	return out
 }

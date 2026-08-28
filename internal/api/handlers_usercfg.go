@@ -127,9 +127,9 @@ func (s *Server) buildUserConfig() map[string]any {
 	return map[string]any{
 		"ffmpeg": map[string]any{
 			"realtime": map[string]any{
-				"enabled":      false,
-				"resolutions":  []int{720, 1080, 1440, 2160},
-				"videoCodecs":  []string{"h264", "hevc", "vp9", "av1"},
+				"enabled":     false,
+				"resolutions": []int{720, 1080, 1440, 2160},
+				"videoCodecs": []string{"h264", "hevc", "vp9", "av1"},
 			},
 		},
 		"image": map[string]any{
@@ -138,13 +138,13 @@ func (s *Server) buildUserConfig() map[string]any {
 			"thumbnail": map[string]any{"size": 250},
 		},
 		"machineLearning": map[string]any{
-			"enabled":             ml.Enabled,
-			"clip":                map[string]any{"enabled": ml.Clip.Enabled},
-			"duplicateDetection":  map[string]any{"enabled": ml.DuplicateDetection.Enabled},
+			"enabled":            ml.Enabled,
+			"clip":               map[string]any{"enabled": ml.Clip.Enabled},
+			"duplicateDetection": map[string]any{"enabled": ml.DuplicateDetection.Enabled},
 			"facialRecognition": map[string]any{
-				"enabled":   ml.FacialRecognition.Enabled,
-				"minFaces":  ml.FacialRecognition.MinFaces,
-				"minScore":  ml.FacialRecognition.MinScore,
+				"enabled":     ml.FacialRecognition.Enabled,
+				"minFaces":    ml.FacialRecognition.MinFaces,
+				"minScore":    ml.FacialRecognition.MinScore,
 				"maxDistance": ml.FacialRecognition.MaxDistance,
 			},
 			"ocr": map[string]any{"enabled": ml.OCR.Enabled},
@@ -153,12 +153,12 @@ func (s *Server) buildUserConfig() map[string]any {
 		"oauth": map[string]any{
 			"enabled": false, "autoLaunch": false, "buttonText": "",
 		},
-		"passwordLogin": map[string]any{"enabled": true},
-		"server":        map[string]any{"loginPageMessage": ""},
-		"theme":         map[string]any{"customCss": ""},
-		"trash":         map[string]any{"enabled": true, "days": 30},
+		"passwordLogin":   map[string]any{"enabled": true},
+		"server":          map[string]any{"loginPageMessage": ""},
+		"theme":           map[string]any{"customCss": ""},
+		"trash":           map[string]any{"enabled": true, "days": 30},
 		"newVersionCheck": map[string]any{"enabled": false},
-		"job": map[string]any{}, // per-queue concurrency tuning not exposed
+		"job":             map[string]any{}, // per-queue concurrency tuning not exposed
 	}
 }
 
@@ -178,10 +178,10 @@ func (s *Server) getUserConfigDefaults(w http.ResponseWriter, r *http.Request) {
 
 func publicConfig() map[string]any {
 	return map[string]any{
-		"oauth":          map[string]any{"autoLaunch": false, "buttonText": "", "enabled": false},
-		"passwordLogin":  map[string]any{"enabled": true},
-		"server":         map[string]any{"loginPageMessage": ""},
-		"theme":          map[string]any{"customCss": ""},
+		"oauth":         map[string]any{"autoLaunch": false, "buttonText": "", "enabled": false},
+		"passwordLogin": map[string]any{"enabled": true},
+		"server":        map[string]any{"loginPageMessage": ""},
+		"theme":         map[string]any{"customCss": ""},
 	}
 }
 
@@ -201,10 +201,10 @@ func (s *Server) serverApkLinks(w http.ResponseWriter, r *http.Request) {
 	}
 	const base = "https://github.com/immich-app/immich/releases/latest/download/"
 	writeJSON(w, http.StatusOK, map[string]string{
-		"arm64v8a":  base + "app-arm64-v8a.apk",
+		"arm64v8a":   base + "app-arm64-v8a.apk",
 		"armeabiv7a": base + "app-armeabi-v7a.apk",
-		"universal": base + "app-universal.apk",
-		"x86_64":    base + "app-x86_64.apk",
+		"universal":  base + "app-universal.apk",
+		"x86_64":     base + "app-x86_64.apk",
 	})
 }
 
