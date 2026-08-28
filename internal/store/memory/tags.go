@@ -51,11 +51,19 @@ func (s *tagStore) Delete(ctx context.Context, id string) error {
 	if _, ok := s.tags[id]; !ok {
 		return store.ErrNotFound
 	}
-	// Remove the tag, its direct children and every link.
+	// Remove the tag, its direct children and every link, bumping the
+	// sync watermark of assets that lost a tag.
 	children := map[string]bool{}
 	for _, t := range s.tags {
 		if t.ParentID != nil && *t.ParentID == id {
 			children[t.ID] = true
+		}
+	}
+	var linked []string
+	for k := range s.tagLinks {
+		parts := strings.SplitN(k, "|", 2)
+		if parts[0] == id || children[parts[0]] {
+			linked = append(linked, parts[1])
 		}
 	}
 	delete(s.tags, id)
@@ -68,8 +76,7 @@ func (s *tagStore) Delete(ctx context.Context, id string) error {
 			delete(s.tagLinks, k)
 		}
 	}
-	uid := s.updateSeq.Add(1)
-	s.deletes = append(s.deletes, domain.SyncDelete{Type: "TagDeleteV1", EntityID: id, UpdateID: uid})
+	s.bumpAssetsLocked(linked)
 	return nil
 }
 

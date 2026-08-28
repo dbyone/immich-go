@@ -119,5 +119,13 @@ timeline 可见性过滤），官方 Web 的 Folders 页直接可用——MT 的
 - [x] tags 全套（CRUD/bulk/层级，覆盖 134/274 = 48.9%）
 - [x] 官方 Web 前端内置（2026-08-28）：`web/` fork 自 v3.1.0 + Go embed 单二进制托管；
       前端落实单图刷新按钮与"仅完全重复"开关；重复项 API 契约漂移修复
+- [x] 2026-08-28 review 批修复：tags 重复创建 409 / 改名级联子标签 / bulk 无效 id 400；
+      folders O(n²)→sort.Slice；smart search archived 过滤（无 ML 空结果改 200）；
+      /trash/restore/assets、/search/suggestions 枚举契约修正（camera-make 等）；
+      router 历史重复注册块清理；TagDeleteV1 墓碑移除（改为 bump 关联资产）；
+      webui 按 Accept-Encoding 直发 .br/.gz（-79% 传输）；覆盖 130/254 = 51.2%
+- [ ] socket.io：经调研无成熟 Go 库（googollee/go-socket.io 已于 2024-09 归档且仅支持
+      EIO3/协议1.4，与 immich 客户端 socket.io 4.8 的 EIO4/协议5 不匹配）；如需实时性
+      建议自实现 EIO4 websocket-only 最小子集，前端当前已优雅降级
 - [ ] 场景词表扩展为可配置（外置 taxonomy 文件或 LLM/VLM 外接分类器）
 - [ ] 本文档随版本演进维护，重大结论变更需注明日期

@@ -38,7 +38,7 @@ func waitExif(t *testing.T, h http.Handler, token string) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		code, b := doJSON(t, h, http.MethodGet, "/api/search/suggestions?type=make", token, nil)
+		code, b := doJSON(t, h, http.MethodGet, "/api/search/suggestions?type=camera-make", token, nil)
 		if code == 200 {
 			if list, _ := b.([]any); len(list) >= 1 {
 				return
@@ -135,7 +135,7 @@ func TestSearchLongTail(t *testing.T) {
 		t.Fatalf("statistics: %v", body)
 	}
 
-	code, body = doJSON(t, h, http.MethodGet, "/api/search/suggestions?type=make", token, nil)
+	code, body = doJSON(t, h, http.MethodGet, "/api/search/suggestions?type=camera-make", token, nil)
 	if code != 200 || body.([]any)[0] != "TestCam" {
 		t.Fatalf("suggestions: %d %v", code, body)
 	}

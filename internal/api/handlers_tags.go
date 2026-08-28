@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -68,6 +69,15 @@ func (s *Server) createTag(w http.ResponseWriter, r *http.Request) {
 		}
 		value = parent.Value + "/" + req.Name
 	}
+	// The (user, value) pair is unique; a repeat create is a conflict,
+	// not a 500 from the storage layer's unique index.
+	if _, err := s.app.Store.Tags().GetByValue(r.Context(), a.User.ID, value); err == nil {
+		writeError(w, http.StatusConflict, "tag already exists")
+		return
+	} else if err != store.ErrNotFound {
+		s.storeError(w, err)
+		return
+	}
 	tag := &domain.Tag{
 		ID:        crypto.NewUUID(),
 		UserID:    a.User.ID,
@@ -123,17 +133,25 @@ func (s *Server) bulkTagAssets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	tagged := map[string]bool{}
+	// Validate every id up front — upstream rejects the whole request on
+	// unknown tags or foreign assets instead of silently skipping.
 	for _, tagID := range req.TagIDs {
 		tag, err := s.app.Store.Tags().Get(r.Context(), tagID)
 		if err != nil || tag.UserID != a.User.ID {
-			continue
+			writeError(w, http.StatusBadRequest, "invalid tagId")
+			return
 		}
+	}
+	for _, assetID := range req.AssetIDs {
+		asset, err := s.app.Store.Assets().Get(r.Context(), assetID)
+		if err != nil || asset.OwnerID != a.User.ID {
+			writeError(w, http.StatusBadRequest, "invalid assetId")
+			return
+		}
+	}
+	tagged := map[string]bool{}
+	for _, tagID := range req.TagIDs {
 		for _, assetID := range req.AssetIDs {
-			asset, err := s.app.Store.Assets().Get(r.Context(), assetID)
-			if err != nil || asset.OwnerID != a.User.ID {
-				continue
-			}
 			if n, err := s.app.Store.Tags().Attach(r.Context(), tagID, []string{assetID}); err == nil && n > 0 {
 				tagged[assetID] = true
 			}
@@ -200,6 +218,11 @@ func (s *Server) updateTag(w http.ResponseWriter, r *http.Request) {
 		} else {
 			tag.Value = tag.Name
 		}
+		// Renaming a branch relabels the whole subtree, like upstream.
+		if err := s.retagDescendants(r.Context(), a.User.ID, tag); err != nil {
+			s.storeError(w, err)
+			return
+		}
 	}
 	if req.Color != nil {
 		tag.Color = req.Color
@@ -209,6 +232,44 @@ func (s *Server) updateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tagResponse(tag))
+}
+
+// retagDescendants recomputes descendant values after a rename (parent
+// value changes ripple down the path prefix).
+func (s *Server) retagDescendants(ctx context.Context, userID string, tag *domain.Tag) error {
+	all, err := s.app.Store.Tags().ListForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	byParent := map[string][]*domain.Tag{}
+	oldValue := ""
+	for _, t := range all {
+		if t.ParentID != nil {
+			byParent[*t.ParentID] = append(byParent[*t.ParentID], t)
+		}
+		if t.ID == tag.ID {
+			oldValue = t.Value
+		}
+	}
+	if oldValue == "" || oldValue == tag.Value {
+		return nil
+	}
+	var walk func(parent *domain.Tag) error
+	walk = func(parent *domain.Tag) error {
+		for _, child := range byParent[parent.ID] {
+			if len(child.Value) > len(oldValue) && strings.HasPrefix(child.Value, oldValue+"/") {
+				child.Value = tag.Value + strings.TrimPrefix(child.Value, oldValue)
+				if err := s.app.Store.Tags().Update(ctx, child); err != nil {
+					return err
+				}
+			}
+			if err := walk(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(tag)
 }
 
 func (s *Server) deleteTag(w http.ResponseWriter, r *http.Request) {

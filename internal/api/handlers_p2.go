@@ -3,7 +3,6 @@ package api
 import (
 	"math/rand"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -236,53 +235,6 @@ func (s *Server) searchLargeAssets(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
-
-// searchSuggestions returns distinct values for a search field
-// (?type=country|state|city|make|model|lens-model|camera-model).
-func (s *Server) searchSuggestions(w http.ResponseWriter, r *http.Request) {
-	a := caller(w, r)
-	if a == nil {
-		return
-	}
-	typ := r.URL.Query().Get("type")
-	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
-	seen := map[string]bool{}
-	var out []string
-	for _, asset := range assets {
-		if asset.DeletedAt != nil || asset.Exif == nil {
-			continue
-		}
-		e := asset.Exif
-		var value string
-		switch typ {
-		case "country":
-			value = e.Country
-		case "state":
-			value = e.State
-		case "city":
-			value = e.City
-		case "make":
-			value = e.Make
-		case "model":
-			value = e.Model
-		case "lens-model":
-			value = e.LensModel
-		default:
-			writeError(w, http.StatusBadRequest, "invalid suggestion type")
-			return
-		}
-		if value != "" && !seen[value] {
-			seen[value] = true
-			out = append(out, value)
-		}
-	}
-	sort.Strings(out)
-	if out == nil {
-		out = []string{}
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
 func parseToInt64(s string) (int64, error) {
 	var v int64
 	for _, c := range s {

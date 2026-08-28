@@ -200,6 +200,112 @@ func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// restoreAssets untrashes the given ids only (POST /trash/restore/assets,
+// BulkIdsDto -> TrashResponseDto).
+func (s *Server) restoreAssets(w http.ResponseWriter, r *http.Request) {
+	a := caller(w, r)
+	if a == nil {
+		return
+	}
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	now := time.Now().UTC()
+	count := 0
+	for _, id := range req.IDs {
+		asset, err := s.app.Store.Assets().Get(r.Context(), id)
+		if err != nil || asset.OwnerID != a.User.ID || asset.DeletedAt == nil {
+			continue
+		}
+		if _, err := s.app.UpdateAsset(r.Context(), id, func(fresh *domain.Asset) error {
+			fresh.DeletedAt = nil
+			fresh.UpdatedAt = now
+			return nil
+		}); err == nil {
+			count++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
+// searchSuggestions answers the typeahead dropdown: distinct values of
+// one metadata facet across the caller's assets (GET /search/suggestions,
+// SearchSuggestionsDto -> string[]).
+func (s *Server) searchSuggestions(w http.ResponseWriter, r *http.Request) {
+	a := caller(w, r)
+	if a == nil {
+		return
+	}
+	typ := r.URL.Query().Get("type")
+	country := r.URL.Query().Get("country")
+	state := r.URL.Query().Get("state")
+	makeFilter := r.URL.Query().Get("make")
+	modelFilter := r.URL.Query().Get("model")
+	lensFilter := r.URL.Query().Get("lensModel")
+
+	switch typ {
+	case "country", "state", "city", "camera-make", "camera-model", "camera-lens-model":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid suggestion type")
+		return
+	}
+	pick := func(e *domain.AssetExif) string {
+		switch typ {
+		case "country":
+			return e.Country
+		case "state":
+			return e.State
+		case "city":
+			return e.City
+		case "camera-make":
+			return e.Make
+		case "camera-model":
+			return e.Model
+		default:
+			return e.LensModel
+		}
+	}
+
+	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, asset := range assets {
+		if asset.DeletedAt != nil || asset.Exif == nil {
+			continue
+		}
+		e := asset.Exif
+		if country != "" && e.Country != country {
+			continue
+		}
+		if state != "" && e.State != state {
+			continue
+		}
+		if makeFilter != "" && e.Make != makeFilter {
+			continue
+		}
+		if modelFilter != "" && e.Model != modelFilter {
+			continue
+		}
+		if lensFilter != "" && e.LensModel != lensFilter {
+			continue
+		}
+		if v := pick(e); v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	writeJSON(w, http.StatusOK, out)
+}
+
 // --- search ---
 
 type searchRequest struct {
@@ -359,8 +465,8 @@ func (s *Server) searchSmart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, asset := range assets {
-		if asset.DeletedAt != nil {
-			continue
+		if asset.DeletedAt != nil || asset.Visibility != domain.VisibilityTimeline {
+			continue // upstream smart search only ranks timeline-visible assets
 		}
 		if contains(lower(asset.OriginalFileName), q) || contains(lower(asset.OriginalPath), q) {
 			entries = append(entries, ranked{asset: asset, score: 1})
@@ -393,11 +499,6 @@ func (s *Server) searchSmart(w http.ResponseWriter, r *http.Request) {
 			entries = append(entries, ranked{asset: asset, score: hit.Score})
 			seen[asset.ID] = true
 		}
-	} else if len(entries) == 0 {
-		// Preserve the upstream signal that smart search is unavailable
-		// when neither vector nor text matching produced anything.
-		writeError(w, http.StatusBadRequest, "Smart search is disabled")
-		return
 	}
 
 	page, size := pageParams(req.Page, req.Size)

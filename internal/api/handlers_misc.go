@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -356,11 +357,7 @@ func (s *Server) folderView(w http.ResponseWriter, r *http.Request) {
 		matches = append(matches, named{name: rest, asset: asset})
 	}
 	// Order by file name, the upstream regexp_replace basename sort.
-	for i := 1; i < len(matches); i++ {
-		for j := i; j > 0 && matches[j].name < matches[j-1].name; j-- {
-			matches[j], matches[j-1] = matches[j-1], matches[j]
-		}
-	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].name < matches[j].name })
 	out := []AssetResponse{}
 	for _, m := range matches {
 		out = append(out, s.assetResponse(r.Context(), m.asset, false))
@@ -395,10 +392,6 @@ func (s *Server) folderUniquePaths(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Ascending, exactly like the upstream ORDER BY directoryPath.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j] < out[j-1]; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
+	sort.Strings(out)
 	writeJSON(w, http.StatusOK, out)
 }

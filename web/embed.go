@@ -43,9 +43,23 @@ func cachePolicy(name string) string {
 	return "no-cache"
 }
 
-// serveFile writes one embedded file.
+// serveFile writes one embedded file, preferring the precompressed
+// .br / .gz siblings the SvelteKit adapter ships next to every asset.
 func serveFile(w http.ResponseWriter, r *http.Request, name string) {
+	enc := ""
 	data, err := fs.ReadFile(dist(), name)
+	if err == nil && r.Method != http.MethodHead {
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "br") {
+			if b, e := fs.ReadFile(dist(), name+".br"); e == nil {
+				data, enc = b, "br"
+			}
+		}
+		if enc == "" && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			if g, e := fs.ReadFile(dist(), name+".gz"); e == nil {
+				data, enc = g, "gzip"
+			}
+		}
+	}
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -53,8 +67,12 @@ func serveFile(w http.ResponseWriter, r *http.Request, name string) {
 	if ct := mimeByExt(name); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+	if enc != "" {
+		w.Header().Set("Content-Encoding", enc)
+	}
 	w.Header().Set("Cache-Control", cachePolicy(name))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Vary", "Accept-Encoding")
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return

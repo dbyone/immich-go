@@ -159,7 +159,7 @@ docs/                   架构分析、ML 兼容、DuckDB 向量库文档
 | 实体持久化 | ✅ 用户/会话/API Key/资产(含 EXIF)/相册/回忆/标签/同步ack/系统元数据 均持久化于 `<media>/immich.duckdb`，重启不丢（已实测重启恢复） |
 | EXIF 元数据 | ✅ 纯 Go 解析 JPEG/TIFF（相机/镜头、原始拍摄时间、GPS 坐标、描述、评分、方向修正宽高），无 exiftool 依赖 |
 | 视频元数据 | ✅ 纯 Go 解析 MP4/MOV（时长、分辨率、fps、编码、旋转；ffprobe 处理其他容器）；缩略图经 ffmpeg 抽帧生成海报（无 ffmpeg 时优雅降级） |
-| Immich API | ✅ 134/274 操作（48.9%）：auth/assets/albums/timeline/trash/search 全套(8 个长尾端点)/jobs/sessions 全套/api-keys/users 基础/server(无 license)/people 全套/memories 全套/**tags 全套（CRUD/bulk/层级）**/**view folder（上游精确语义）**/**sync 增量化（update_id 水位 + 删除事件）**/duplicates/download/map/stacks 全套/partners 全套/config/public-config/onboarding 均可用；**shared-links 暂不实现**（设计决策） |
+| Immich API | ✅ 130/254 操作（51.2%，对 v3.1.0 基准）：auth/assets/albums/timeline/trash/search 全套(8 个长尾端点)/jobs/sessions 全套/api-keys/users 基础/server(无 license)/people 全套/memories 全套/**tags 全套（CRUD/bulk/层级）**/**view folder（上游精确语义）**/**sync 增量化（update_id 水位 + 删除事件）**/duplicates/download/map/stacks 全套/partners 全套/config/public-config/onboarding 均可用；**shared-links 暂不实现**（设计决策） |
 | 官方 Web / 移动端 | ⚠️ 首启向导、偏好、回忆、人物管理、重复项处理、下载、地图、**文件夹视图**、**标签页**（含场景分类标签）已可用；admin 面板、OAuth、伙伴、堆叠、共享链接等未覆盖 |
 
 详见 [docs/architecture-analysis.md](docs/architecture-analysis.md)（上游架构分析 + 移植映射 + 路线图）、

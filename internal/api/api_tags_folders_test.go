@@ -283,11 +283,12 @@ func TestSmartSearchFilenameFallback(t *testing.T) {
 		t.Fatalf("path match: %d %v", code, body)
 	}
 
-	// No match and no ML keeps the upstream "disabled" signal.
-	code, _ = doJSON(t, h, http.MethodPost, "/api/search/smart", token,
+	// No match without ML yields an empty page, not an error — the
+	// filename fallback makes smart search always answerable.
+	code, body = doJSON(t, h, http.MethodPost, "/api/search/smart", token,
 		map[string]any{"query": "zzz-nothing"})
-	if code != http.StatusBadRequest {
-		t.Fatalf("no-ML no-match must 400, got %d", code)
+	if code != http.StatusOK || len(asMap(t, body)["assets"].([]any)) != 0 {
+		t.Fatalf("no-ML no-match: %d %v (want 200 + empty)", code, body)
 	}
 }
 

@@ -86,18 +86,41 @@ func (s *tagStore) Delete(ctx context.Context, id string) error {
 		}
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM tag_assets WHERE tag_id = ?`, id); err != nil {
+	// Remember which assets were linked so their sync watermark can be
+	// bumped — the tag disappears from their next asset row redelivery.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT ta.asset_id FROM tag_assets ta
+		JOIN tags t ON t.id = ta.tag_id
+		WHERE t.id = ? OR t.parent_id = ?`, id, id)
+	if err != nil {
+		return err
+	}
+	var linked []string
+	for rows.Next() {
+		var assetID string
+		if err := rows.Scan(&assetID); err != nil {
+			rows.Close()
+			return err
+		}
+		linked = append(linked, assetID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM tag_assets WHERE tag_id IN (SELECT id FROM tags WHERE id = ? OR parent_id = ?)`, id, id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE id = ? OR parent_id = ?`, id, id); err != nil {
 		return err
 	}
-	// Assets that lost tags need a sync bump so the link disappears
-	// client-side; we do not know which assets were linked anymore, but the
-	// delete tombstone lets full-refresh clients reconcile.
-	if err := (*Store)(s).recordDelete(ctx, tx, "TagDeleteV1", id); err != nil {
+	if err := s.bumpAssets(ctx, tx, linked); err != nil {
 		return err
 	}
+	// Upstream does not sync tag deletions (no SyncEntityType for tags);
+	// asset rows carry their tags, and the delete bumps above already
+	// cover attached assets, so no tombstone is recorded here.
 	return tx.Commit()
 }
 
