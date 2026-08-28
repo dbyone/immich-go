@@ -1,0 +1,1 @@
+var e;(function(e){e.B=`B`,e.KiB=`KiB`,e.MiB=`MiB`,e.GiB=`GiB`,e.TiB=`TiB`,e.PiB=`PiB`,e.EiB=`EiB`})(e||={});var t=[e.B,e.KiB,e.MiB,e.GiB,e.TiB,e.PiB,e.EiB];function n(e,n=1){let r=Math.floor(Math.log(e===0?1:e)/Math.log(1024));return[Number.parseFloat((e/1024**r).toFixed(n)),t[r]]}function r(e,t,r=1,i=` `){let[a,o]=n(e,r);return`${a.toLocaleString(t)}${i}${o}`}export{r as t};

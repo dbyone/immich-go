@@ -227,8 +227,14 @@ func TestDuplicatesExactFilter(t *testing.T) {
 		t.Fatalf("all duplicates: %d %v", code, body)
 	}
 	group := asMap(t, body.([]any)[0])
-	if group["duplicateCount"] != float64(3) {
-		t.Fatalf("group size = %v", group["duplicateCount"])
+	if len(group["assets"].([]any)) != 3 {
+		t.Fatalf("group size = %v", group["assets"])
+	}
+	if group["duplicateId"] != "dup-group-1" {
+		t.Fatalf("duplicateId = %v (contract drift)", group["duplicateId"])
+	}
+	if keep := group["suggestedKeepAssetIds"].([]any); len(keep) != 2 {
+		t.Fatalf("one keeper per checksum class expected, got %v", keep)
 	}
 
 	code, body = doJSON(t, h, http.MethodGet, "/api/duplicates?exact=true", token, nil)
@@ -240,8 +246,11 @@ func TestDuplicatesExactFilter(t *testing.T) {
 		t.Fatalf("exact: want 1 group, got %d", len(groups))
 	}
 	g := asMap(t, groups[0])
-	if g["duplicateCount"] != float64(2) {
-		t.Fatalf("exact group must keep only the identical pair, got %v", g["duplicateCount"])
+	if len(g["assets"].([]any)) != 2 {
+		t.Fatalf("exact group must keep only the identical pair, got %v", g["assets"])
+	}
+	if keep := g["suggestedKeepAssetIds"].([]any); len(keep) != 1 {
+		t.Fatalf("exact keeper count = %v", keep)
 	}
 }
 

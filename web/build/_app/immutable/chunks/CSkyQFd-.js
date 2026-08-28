@@ -1,0 +1,1 @@
+var e=`دەربارە`,t=`هەژمار`,n=`ڕێکخستنی هەژمار`,r=`دانپێدانان`,i={about:e,account:t,account_settings:n,acknowledge:r};export{e as about,t as account,n as account_settings,r as acknowledge,i as default};

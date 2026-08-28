@@ -67,15 +67,18 @@ asset-viewer 组件含 OcrBoundingBox（OCR 高亮）、ActivityViewer（照片�
 
 ## 4. immich-go 可借鉴点（候选路线图）
 
-> 2026-08-26 更新：2/3/4/5/6 已全部落实（见 §7）；1（年份快轨）为纯前端项，
-> 官方 Web 由上游仓库发布，不在本服务端仓库范围内。
+> 2026-08-26 更新：2/3/4/5/6 已全部落实（见 §7）。
+> 2026-08-28 更新：官方 Web 前端（v3.1.0 fork）已内置于本仓库并由 Go embed 托管，
+> 前端侧增强（单图刷新按钮、仅完全重复开关）已随 fork 落实；年份快轨经源码核实
+> **上游本就内置**（Scrubber.svelte：竖向年份标签+月份刻度+拖动导航，hover 展开），
+> 此前"Immich 无年份快轨"的判断有误，无需重造。
 
-1. **年份快轨**：timeline 侧边竖向年份导航（纯前端）。
-2. ✅ **单图刷新按钮（后端半）**：`POST /api/assets/{id}/refresh` 重跑元数据流水线。
-3. ✅ **MD5 精确重复过滤开关**：`GET /api/duplicates?exact=true` 按 SHA-1 分组只看字节级重复。
+1. ~~**年份快轨**~~：上游已内置（Scrubber.svelte），此前判断有误。
+2. ✅ **单图刷新按钮**：前端 DetailPanel 刷新按钮 → `POST /api/assets/{id}/refresh` → 重载资产。
+3. ✅ **MD5 精确重复过滤开关**：前端重复项页"仅完全重复"开关 → `GET /api/duplicates?exact=true`（按 SHA-1 分组）；顺带修复 `/api/duplicates` 响应契约漂移（`duplicateId`/`suggestedKeepAssetIds` 对齐上游 DuplicateResponseDto）。
 4. ✅ **文件名/路径搜索**：smart search 先做文件名/路径精确匹配再并入向量结果（无 ML 也可用）；metadata 搜索新增 `originalFileName`/`originalPath` 过滤。
-5. ✅ **场景分类标签**：`internal/classify` 零样本 CLIP 打标 + `场景/<标签>` 层级标签 + `GET /api/assets/{id}/classification` 实时得分端点。
-6. ✅ 应用内升级检查：暂不做（依赖发布渠道，低价值），以 `/api/server-info` 版本比对替代方案待议。
+5. ✅ **场景分类标签**：`internal/classify` 零样本 CLIP 打标 + `场景/<标签>` 层级标签 + `GET /api/assets/{id}/classification` 实时得分端点；官方 Web 的 Tags 页与资产详情标签面板自动展示。
+6. ✅ 应用内升级检查：暂不做（依赖发布渠道，低价值）。
 
 ### 4.1 可插拔 AI（超出原计划的落地）
 
@@ -114,6 +117,7 @@ timeline 可见性过滤），官方 Web 的 Folders 页直接可用——MT 的
 - [x] §4-2/3/4 后端部分 + §4-5 场景分类适配层（2026-08-26 完成，含 mt-photos-ai Provider）
 - [x] 文件夹功能（上游精确语义，官方 Web /folders 可用）
 - [x] tags 全套（CRUD/bulk/层级，覆盖 134/274 = 48.9%）
-- [ ] §4-1 年份快轨：官方 Web 由上游发布，如需定制须自行构建 Web（另立仓库）
+- [x] 官方 Web 前端内置（2026-08-28）：`web/` fork 自 v3.1.0 + Go embed 单二进制托管；
+      前端落实单图刷新按钮与"仅完全重复"开关；重复项 API 契约漂移修复
 - [ ] 场景词表扩展为可配置（外置 taxonomy 文件或 LLM/VLM 外接分类器）
 - [ ] 本文档随版本演进维护，重大结论变更需注明日期

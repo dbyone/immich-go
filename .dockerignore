@@ -1,0 +1,15 @@
+# Web build toolchain — the compiled web/build ships in the repo, so
+# Node/pnpm artifacts never belong in the Docker build context.
+web/node_modules
+web/.svelte-kit
+web/*.log
+
+# Local state
+data/
+*.duckdb
+*.duckdb.wal
+
+# VCS / IDE
+.git
+.idea
+.vscode

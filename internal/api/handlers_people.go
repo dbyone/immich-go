@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 
 	"immich-go/internal/domain"
 )
@@ -47,9 +48,9 @@ func (s *Server) listPeople(w http.ResponseWriter, r *http.Request) {
 
 // DuplicateGroup mirrors the upstream DuplicateResponseDto shape.
 type DuplicateGroup struct {
-	ID             string          `json:"id"`
-	DuplicateCount int             `json:"duplicateCount"`
-	Assets         []AssetResponse `json:"assets"`
+	DuplicateID           string          `json:"duplicateId"`
+	Assets                []AssetResponse `json:"assets"`
+	SuggestedKeepAssetIDs []string        `json:"suggestedKeepAssetIds"`
 }
 
 // listDuplicates groups the owner's assets by duplicateId (assigned by the
@@ -94,11 +95,50 @@ func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) duplicateGroupFor(r *http.Request, id string, members []*domain.Asset) DuplicateGroup {
-	g := DuplicateGroup{ID: id, DuplicateCount: len(members)}
+	g := DuplicateGroup{
+		DuplicateID:           id,
+		Assets:                make([]AssetResponse, 0, len(members)),
+		SuggestedKeepAssetIDs: suggestKeeps(members),
+	}
 	for _, m := range members {
 		g.Assets = append(g.Assets, s.assetResponse(r.Context(), m, false))
 	}
 	return g
+}
+
+// suggestKeeps picks one keeper per checksum class — the largest file (a
+// stand-in for upstream's file-size + EXIF heuristic), newest capture as
+// the tie-breaker.
+func suggestKeeps(members []*domain.Asset) []string {
+	best := map[string]*domain.Asset{}
+	for _, m := range members {
+		key := string(m.Checksum)
+		cur, ok := best[key]
+		if !ok || betterKeeper(m, cur) {
+			best[key] = m
+		}
+	}
+	keep := make([]string, 0, len(best))
+	for _, m := range best {
+		keep = append(keep, m.ID)
+	}
+	sort.Strings(keep)
+	return keep
+}
+
+func betterKeeper(a, b *domain.Asset) bool {
+	as, bs := exifSize(a), exifSize(b)
+	if as != bs {
+		return as > bs
+	}
+	return a.FileCreatedAt.After(b.FileCreatedAt)
+}
+
+func exifSize(a *domain.Asset) int64 {
+	if a.Exif != nil {
+		return a.Exif.FileSize
+	}
+	return 0
 }
 
 // groupByChecksum buckets the members by identical checksum, keeping only

@@ -16,14 +16,27 @@ CLIP/人脸向量、SQL 余弦检索、DBSCAN 人脸聚类（自动生成人物�
 DuckDB**——`<media>/immich.duckdb` 一个文件即服务端的完整状态，重启不丢；无需
 PostgreSQL 与 Redis（`IMMICH_STORE=memory` 可退回易失内存后端）。
 
+**官方 Web 前端已内置**：`web/` 目录 fork 自上游 Immich v3.1.0 的 SvelteKit 应用
+（adapter-static），编译产物经 Go `embed` 打进同一个二进制——启动后浏览器直接访问
+`http://localhost:2283` 即是完整 Web 界面（照片流/相册/人物/地图/文件夹/标签/重复项…），
+无需单独部署 nginx 或 web 容器；深链由 SPA fallback 托底，`/api` 保持 JSON 语义。
+fork 中落实了 MT Photos 借鉴增强：**照片详情面板单图刷新按钮**（重跑该资产的
+EXIF/缩略图/CLIP/场景标签流水线）、**重复项页"仅完全重复"开关**（SHA-1 字节级分组），
+并修正了 `/api/duplicates` 响应与上游 DuplicateResponseDto 的契约漂移
+（`duplicateId`/`suggestedKeepAssetIds`）。注意 `web/` 与 `i18n/` 源自上游 AGPL-3.0
+代码，沿用该授权（见 web/LICENSE 与 web/README.md 的 fork 说明）；仓库其余部分为 MIT。
+
 > 注意：go-duckdb 需要 CGO —— 本机构建需安装 gcc/g++（Windows 用
 > [WinLibs](https://winlibs.com/) / MSYS2），Docker 构建已内置（见 Dockerfile）。
+> 前端产物已随仓库提交，日常 `go build` 无需 Node；改前端后进入 `web/` 执行
+> `corepack pnpm install && corepack pnpm run build` 重建（需 Node 24 + pnpm 10）。
 
 ## 快速开始
 
 ```bash
 go build -o immich-go ./cmd/immich-go
 IMMICH_PORT=2283 IMMICH_MEDIA_LOCATION=./data ./immich-go
+# 浏览器打开 http://localhost:2283 —— 内置 Web 界面即开箱可用
 ```
 
 或使用 Docker Compose（含官方 machine-learning 容器）：
@@ -162,7 +175,8 @@ go vet ./...
 
 ## License
 
-[MIT](LICENSE)
-
-本项目是基于对上游 Immich（AGPL-3.0）公开 API 行为的独立分析编写的兼容实现，
-未复制其源代码；本仓库自身按 MIT 授权发布。
+- **`web/` 与 `i18n/`**：fork 自上游 Immich 的 AGPL-3.0 代码（含本地增强，
+  清单见 [web/README.md](web/README.md) 与 [web/LICENSE](web/LICENSE)），
+  按原授权发布；`web/build/` 编译产物同源同授权。
+- **仓库其余部分**：[MIT](LICENSE)。基于对上游 Immich 公开 API 行为的独立分析
+  编写的兼容实现，未复制其服务端源代码。

@@ -348,8 +348,11 @@ func TestEndToEndFlow(t *testing.T) {
 		t.Fatalf("expected 1 duplicate group, got %v", dupGroups)
 	}
 	dup, _ := dupGroups[0].(map[string]any)
-	if dup["duplicateCount"] != float64(3) {
+	if len(dup["assets"].([]any)) != 3 {
 		t.Fatalf("duplicate group should hold 3 assets: %v", dup)
+	}
+	if dup["duplicateId"] == "" || len(dup["suggestedKeepAssetIds"].([]any)) == 0 {
+		t.Fatalf("DuplicateResponseDto contract fields missing: %v", dup)
 	}
 
 	// Timeline buckets (monthly, columnar bucket payload).

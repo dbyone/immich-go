@@ -15,6 +15,7 @@ import (
 	"immich-go/internal/app"
 	"immich-go/internal/auth"
 	"immich-go/internal/store"
+	webui "immich-go/web"
 )
 
 type Server struct {
@@ -251,10 +252,26 @@ func (s *Server) Router() http.Handler {
 		})
 	})
 
+	// Embedded web application (immich web v3.1.0, adapter-static build):
+	// static assets and the SPA fallback live outside /api, so the API's
+	// JSON 404 semantics stay untouched.
+	r.Get("/", s.serveWebUI)
+	r.Get("/*", s.serveWebUI)
+
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api") && webui.HasIndex() &&
+			(r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			webui.ServeIndex(w, r)
+			return
+		}
 		writeError(w, http.StatusNotFound, "Route not found: "+r.URL.Path)
 	})
 	return r
+}
+
+// serveWebUI delegates to the embedded SPA handler.
+func (s *Server) serveWebUI(w http.ResponseWriter, r *http.Request) {
+	webui.Handler().ServeHTTP(w, r)
 }
 
 // --- middleware ---

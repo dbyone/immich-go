@@ -1,0 +1,1 @@
+import{Vt as e,X as t,ct as n,lt as r}from"./CjOemer8.js";import"./xihTtKlq.js";function i(i,a){var o=r(),s=e(o);t(s,()=>a.children),n(i,o)}export{i as t};

@@ -1,0 +1,1 @@
+@keyframes svelte-enller-delayedVisibility{to{visibility:visible}}.delayed-spinner.svelte-enller{visibility:hidden;animation:0s linear .4s forwards svelte-enller-delayedVisibility}

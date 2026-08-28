@@ -1,0 +1,1 @@
+var e=function(e){return e[e.PENDING=0]=`PENDING`,e[e.STARTED=1]=`STARTED`,e[e.DONE=2]=`DONE`,e[e.ERROR=3]=`ERROR`,e[e.DUPLICATED=4]=`DUPLICATED`,e}({}),t=function(e){return e.SERVER=`server`,e.USER=`user`,e}({});export{e as n,t};

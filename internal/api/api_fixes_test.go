@@ -347,7 +347,7 @@ func TestDuplicatesNotResurrected(t *testing.T) {
 		doJSON(t, h, http.MethodPost, "/api/jobs", token, map[string]any{"name": "detect-duplicates"})
 		_, body := doJSON(t, h, http.MethodGet, "/api/duplicates", token, nil)
 		if groups, _ := body.([]any); len(groups) == 1 {
-			groupID, _ = asMap(t, groups[0])["id"].(string)
+			groupID, _ = asMap(t, groups[0])["duplicateId"].(string)
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
