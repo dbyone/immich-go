@@ -35,6 +35,8 @@ type SessionStore interface {
 	Get(ctx context.Context, id string) (*domain.Session, error)
 	GetByTokenHash(ctx context.Context, hash []byte) (*domain.Session, error)
 	ListForUser(ctx context.Context, userID string) ([]*domain.Session, error)
+	// Count reports the total live sessions (startup census).
+	Count(ctx context.Context) (int64, error)
 }
 
 type APIKeyStore interface {

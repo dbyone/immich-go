@@ -254,6 +254,15 @@ func (s *sessionStore) GetByTokenHash(ctx context.Context, hash []byte) (*domain
 	return sess, err
 }
 
+// Count reports the total sessions (startup census).
+func (s *sessionStore) Count(ctx context.Context) (int64, error) {
+	var n int64
+	if err := s.ro.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (s *sessionStore) ListForUser(ctx context.Context, userID string) ([]*domain.Session, error) {
 	rows, err := s.ro.QueryContext(ctx,
 		`SELECT `+sessionColumns+` FROM sessions WHERE user_id = ? ORDER BY created_at, id`, userID)

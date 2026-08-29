@@ -110,6 +110,15 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 	}
 	log.Info("duckdb ready", "path", cfg.DuckDBPath, "dim", cfg.VectorDim,
 		"entities", storeKind(st), "sqlCosine", vectors.HasSQLCosine())
+	// Startup census: makes session-persistence regressions (e.g. a hard
+	// kill losing a just-written WAL entry) visible at a glance on the
+	// next boot.
+	if n, err := st.Users().Count(context.Background()); err == nil {
+		sessions, _ := st.Sessions().Count(context.Background())
+		if assets, err := st.Assets().List(context.Background()); err == nil {
+			log.Info("store census", "users", n, "sessions", sessions, "assets", len(assets))
+		}
+	}
 
 	a := &App{
 		Cfg:   cfg,
