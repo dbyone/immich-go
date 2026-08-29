@@ -395,3 +395,59 @@ func (s *Server) folderUniquePaths(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(out)
 	writeJSON(w, http.StatusOK, out)
 }
+
+// ---- notifications ----
+//
+// The web client pulls the unread list right after login; immich-go has
+// no notification producer yet, so these answer the upstream contract
+// with an always-empty set (and accept acks as no-ops).
+
+func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request) {
+	if caller(w, r) == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, []map[string]any{})
+}
+
+func (s *Server) updateNotifications(w http.ResponseWriter, r *http.Request) {
+	if caller(w, r) == nil {
+		return
+	}
+	var req struct {
+		IDs    []string `json:"ids"`
+		ReadAt string   `json:"readAt"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	writeJSON(w, http.StatusOK, []map[string]any{})
+}
+
+func (s *Server) getNotification(w http.ResponseWriter, r *http.Request) {
+	if caller(w, r) == nil {
+		return
+	}
+	writeError(w, http.StatusNotFound, "notification not found")
+}
+
+func (s *Server) updateNotification(w http.ResponseWriter, r *http.Request) {
+	if caller(w, r) == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": chiURLParam(r, "id")})
+}
+
+func (s *Server) deleteNotification(w http.ResponseWriter, r *http.Request) {
+	if caller(w, r) == nil {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteNotifications(w http.ResponseWriter, r *http.Request) {
+	if caller(w, r) == nil {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

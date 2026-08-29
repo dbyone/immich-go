@@ -180,6 +180,11 @@ func (s *memoryStore) ListForOwner(ctx context.Context, ownerID string) ([]*doma
 		return nil, err
 	}
 	// Batch asset hydration: one query for every memory in the list.
+	// An empty list must short-circuit — an IN () clause is a syntax
+	// error, which is exactly what broke GET /memories on fresh installs.
+	if len(out) == 0 {
+		return out, nil
+	}
 	byID := make(map[string]*domain.Memory, len(out))
 	marks := make([]string, 0, len(out))
 	args := make([]any, 0, len(out))

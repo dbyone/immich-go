@@ -13,14 +13,14 @@ const defaultPreferences = `{
 	"cast": {"gCastEnabled": false},
 	"download": {"archiveSize": 4294967296, "includeEmbeddedVideos": false},
 	"emailNotifications": {"albumInvite": true, "albumUpdate": true, "enabled": true},
-	"folders": {"enabled": false, "sidebarWeb": false},
+	"folders": {"enabled": true, "sidebarWeb": true},
 	"memories": {"duration": 5259600, "enabled": true, "sidebarWeb": true},
 	"people": {"enabled": true, "minimumFaces": 3, "sidebarWeb": true},
 	"purchase": {"hideBuyButtonUntil": "", "showSupportBadge": true},
 	"ratings": {"enabled": false},
 	"recentlyAdded": {"sidebarWeb": false},
 	"sharedLinks": {"enabled": true},
-	"tags": {"enabled": false, "sidebarWeb": false}
+	"tags": {"enabled": true, "sidebarWeb": true}
 }`
 
 // mergeOverDefaults deep-merges the stored JSON over the defaults so new

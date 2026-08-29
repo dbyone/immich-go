@@ -39,6 +39,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(s.recoverer)
 	r.Use(s.bodyLimit)
+	r.Use(s.accessLog)
 	r.Use(s.authGuard)
 
 	r.Route("/api", func(r chi.Router) {
@@ -147,6 +148,14 @@ func (s *Server) Router() http.Handler {
 			r.With(s.perm("asset.update")).Post("/duplicates/resolve", s.resolveDuplicates)
 			r.With(s.perm("asset.update")).Delete("/duplicates", s.deleteDuplicatesBulk)
 			r.With(s.perm("asset.update")).Delete("/duplicates/{id}", s.deleteDuplicateGroup)
+
+			// notifications (no producer yet; empty contract answers)
+			r.With(s.perm("asset.read")).Get("/notifications", s.getNotifications)
+			r.With(s.perm("asset.update")).Put("/notifications", s.updateNotifications)
+			r.With(s.perm("asset.read")).Get("/notifications/{id}", s.getNotification)
+			r.With(s.perm("asset.update")).Put("/notifications/{id}", s.updateNotification)
+			r.With(s.perm("asset.update")).Delete("/notifications/{id}", s.deleteNotification)
+			r.With(s.perm("asset.update")).Delete("/notifications", s.deleteNotifications)
 
 			// tags
 			r.With(s.perm("tag.read")).Get("/tags", s.listTags)
@@ -270,6 +279,20 @@ func (s *Server) bodyLimit(next http.Handler) http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, jsonBodyLimit)
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// accessLog records client-error responses so missing-contract calls
+// surface in the server log instead of only as browser toasts. The
+// wrapper must keep the Hijacker/Flusher interfaces alive — the
+// websocket upgrade path depends on them.
+func (s *Server) accessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(rec, r)
+		if rec.Status() >= 400 {
+			s.app.Log.Warn("client error", "method", r.Method, "path", r.URL.Path, "status", rec.Status())
+		}
 	})
 }
 
