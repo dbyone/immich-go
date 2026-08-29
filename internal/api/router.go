@@ -167,6 +167,12 @@ func (s *Server) Router() http.Handler {
 			r.With(s.perm("memory.update")).Put("/memories/{id}/assets", s.memoryAssetsUpdate(true))
 			r.With(s.perm("memory.update")).Delete("/memories/{id}/assets", s.memoryAssetsUpdate(false))
 
+			// Socket.IO gateway — the handshake is a plain HTTP upgrade, so
+			// the hub authenticates from request headers itself (same
+			// chain as REST); unauthenticated sockets are dropped there.
+			r.Handle("/socket.io", http.HandlerFunc(s.serveSocketIO))
+			r.Handle("/socket.io/*", http.HandlerFunc(s.serveSocketIO))
+
 			// sync (basic)
 			r.With(s.perm("sync.stream")).Get("/sync/ack", s.getSyncAck)
 			r.With(s.perm("sync.stream")).Post("/sync/ack", s.sendSyncAck)
@@ -242,6 +248,11 @@ func (s *Server) Router() http.Handler {
 // serveWebUI delegates to the embedded SPA handler.
 func (s *Server) serveWebUI(w http.ResponseWriter, r *http.Request) {
 	webui.Handler().ServeHTTP(w, r)
+}
+
+// serveSocketIO delegates the Engine.IO/Socket.IO endpoint.
+func (s *Server) serveSocketIO(w http.ResponseWriter, r *http.Request) {
+	s.app.Realtime.Handler().ServeHTTP(w, r)
 }
 
 // --- middleware ---

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"immich-go/internal/jobs"
 	"immich-go/internal/media"
 	"immich-go/internal/ml"
+	"immich-go/internal/realtime"
 	"immich-go/internal/storage"
 	"immich-go/internal/store"
 	"immich-go/internal/store/duckstore"
@@ -40,6 +42,10 @@ type App struct {
 	// Classifier turns stored CLIP embeddings into hierarchical scene
 	// tags ("场景/<label>"); nil when scene classification is disabled.
 	Classifier *classify.Classifier
+
+	// Realtime is the Socket.IO gateway (/api/socket.io) pushing live
+	// timeline/asset events to the official web and mobile clients.
+	Realtime *realtime.Hub
 
 	// Vectors is the DuckDB-backed vector store replacing the upstream
 	// pgvector layer: CLIP embeddings, face embeddings, people clusters.
@@ -131,6 +137,23 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 			TopK:      cfg.MachineLearning.SceneClassification.TopK,
 		})
 	}
+	// Same credential chain as the REST guard; sockets join their user
+	// and session rooms after the handshake.
+	a.Realtime = realtime.New(func(r *http.Request) (realtime.Credentials, bool) {
+		authCtx, err := a.Auth.Authenticate(context.Background(), r)
+		if err != nil || authCtx == nil {
+			return realtime.Credentials{}, false
+		}
+		creds := realtime.Credentials{UserID: authCtx.User.ID}
+		if authCtx.Session != nil {
+			creds.SessionID = authCtx.Session.ID
+		}
+		return creds, true
+	}, map[string]any{
+		"major": config.VersionMajor,
+		"minor": config.VersionMinor,
+		"patch": config.VersionPatch,
+	}, log)
 	a.Auth.SetSessionTTL(cfg.SessionTTL)
 	a.registerJobs()
 	return a, nil
@@ -156,6 +179,9 @@ func (a *App) Close() {
 	}
 	a.dedupMu.Unlock()
 	a.Jobs.Stop()
+	if a.Realtime != nil {
+		a.Realtime.Close()
+	}
 	a.ML.Teardown()
 	_ = a.Vectors.Close()
 	_ = a.Store.Close()

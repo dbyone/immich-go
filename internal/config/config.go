@@ -83,9 +83,6 @@ type Config struct {
 	DuckDBPath string
 	VectorDim  int
 
-	// Store selects the entity backend: "duckdb" (default) or "memory".
-	Store string
-
 	// UploadLimitMB caps a single upload's request body
 	// (IMMICH_UPLOAD_LIMIT_MB); 0 disables the cap.
 	UploadLimitMB int
@@ -147,7 +144,6 @@ func Load() *Config {
 		MediaLocation:   env("IMMICH_MEDIA_LOCATION", DefaultMediaLocation),
 		VectorDim:       envInt("IMMICH_VECTOR_DIM", 512),
 		ClusterDebounce: time.Duration(envInt("IMMICH_CLUSTER_DEBOUNCE_MS", 5000)) * time.Millisecond,
-		Store:           strings.ToLower(env("IMMICH_STORE", "duckdb")),
 		UploadLimitMB:   envInt("IMMICH_UPLOAD_LIMIT_MB", 8192),
 		DuckDBReaders:   envInt("IMMICH_DUCKDB_READERS", 4),
 	}

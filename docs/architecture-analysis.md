@@ -123,7 +123,7 @@ JSON 对象，键为 task 名 + 图像尺寸：
 | NestJS 控制器 + `/api` 前缀 | `internal/api`（chi 路由） | 相同方法+路径+状态码+DTO 字段（camelCase、RFC3339 毫秒） |
 | Zod DTO | `internal/api/dto.go` 手写结构体 | 与 OpenAPI spec 字段一一对应 |
 | bcrypt(10) + 不透明 token + SHA-256 落库 | `internal/crypto` + `internal/auth` | 算法/常量/头名/Cookie 名一致；API Key 同构 |
-| Kysely + PostgreSQL | `internal/store/duckstore`（内嵌 DuckDB） | users/sessions/api_keys/assets(+exif)/albums(+有序资产/共享用户) 全部持久化于 `<media>/immich.duckdb`，与向量库共享连接；`IMMICH_STORE=memory` 可退回内存后端 |
+| Kysely + PostgreSQL | `internal/store/duckstore`（内嵌 DuckDB） | users/sessions/api_keys/assets(+exif)/albums(+有序资产/共享用户) 全部持久化于 `<media>/immich.duckdb`，与向量库共享连接（单轨后端） |
 | **pgvector / VectorChord 向量检索** | **`internal/vectordb`（内嵌 DuckDB）** | `smart_search`/`face_search`/`person` 表 + SQL `array_cosine_similarity` 余弦检索 + Go 侧 DBSCAN 人脸聚类 + 并查集近重复检测；向量数据持久化于 `<media>/vectors.duckdb`，无需 PostgreSQL/Redis。详见 docs/duckdb-vectordb.md |
 | BullMQ + Redis 19 队列 | `internal/jobs` 进程内队列 | 队列名/统计字段与 `/api/jobs` 完全一致 |
 | `MachineLearningRepository` | `internal/ml` 客户端 | **wire 级兼容**：/ping、/predict multipart（entries/image/text）、pipeline JSON、失败转移、嵌入解码（JSON 数组字符串）逐字段断言测试 |

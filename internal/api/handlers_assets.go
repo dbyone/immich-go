@@ -222,6 +222,8 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.app.QueueAssetPipeline(asset.ID)
+	// Live timeline update for the owner's other sessions.
+	s.app.Realtime.BroadcastToUser(a.User.ID, "on_upload_success", s.assetResponse(r.Context(), asset, false))
 	writeJSON(w, http.StatusCreated, AssetMediaResponse{ID: asset.ID, Status: "created"})
 }
 
@@ -317,7 +319,9 @@ func (s *Server) updateAsset(w http.ResponseWriter, r *http.Request) {
 		s.storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.assetResponse(r.Context(), asset, true))
+	resp := s.assetResponse(r.Context(), asset, true)
+	s.app.Realtime.BroadcastToUser(a.User.ID, "on_asset_update", resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) assetStatistics(w http.ResponseWriter, r *http.Request) {
@@ -439,6 +443,7 @@ func (s *Server) bulkDeleteAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
+	var trashed, deleted []string
 	for _, id := range req.IDs {
 		if req.Force {
 			_, _ = s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
@@ -448,6 +453,7 @@ func (s *Server) bulkDeleteAssets(w http.ResponseWriter, r *http.Request) {
 				return nil
 			})
 			_ = s.app.Jobs.Queue(jobs.JobAssetDelete, app.AssetJobData(id))
+			deleted = append(deleted, id)
 		} else {
 			_, _ = s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
 				if asset.OwnerID != a.User.ID {
@@ -457,7 +463,14 @@ func (s *Server) bulkDeleteAssets(w http.ResponseWriter, r *http.Request) {
 				asset.UpdatedAt = now
 				return nil
 			})
+			trashed = append(trashed, id)
 		}
+	}
+	if len(trashed) > 0 {
+		s.app.Realtime.BroadcastToUser(a.User.ID, "on_asset_trash", trashed)
+	}
+	for _, id := range deleted {
+		s.app.Realtime.BroadcastToUser(a.User.ID, "on_asset_delete", id)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -487,7 +500,7 @@ func (s *Server) bulkUpdateAssets(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	for _, id := range req.IDs {
-		_, _ = s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
+		updated, err := s.app.UpdateAsset(r.Context(), id, func(asset *domain.Asset) error {
 			if asset.OwnerID != a.User.ID {
 				return store.ErrForbidden
 			}
@@ -500,6 +513,9 @@ func (s *Server) bulkUpdateAssets(w http.ResponseWriter, r *http.Request) {
 			asset.UpdatedAt = now
 			return nil
 		})
+		if err == nil && updated != nil {
+			s.app.Realtime.BroadcastToUser(a.User.ID, "on_asset_update", s.assetResponse(r.Context(), updated, false))
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

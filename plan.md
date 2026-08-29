@@ -124,8 +124,9 @@ timeline 可见性过滤），官方 Web 的 Folders 页直接可用——MT 的
       /trash/restore/assets、/search/suggestions 枚举契约修正（camera-make 等）；
       router 历史重复注册块清理；TagDeleteV1 墓碑移除（改为 bump 关联资产）；
       webui 按 Accept-Encoding 直发 .br/.gz（-79% 传输）；覆盖 130/254 = 51.2%
-- [ ] socket.io：经调研无成熟 Go 库（googollee/go-socket.io 已于 2024-09 归档且仅支持
-      EIO3/协议1.4，与 immich 客户端 socket.io 4.8 的 EIO4/协议5 不匹配）；如需实时性
-      建议自实现 EIO4 websocket-only 最小子集，前端当前已优雅降级
+- [x] socket.io（2026-08-29）：采用 zishang520/socket.io v3.0.4（Socket.IO v4+/EIO4 wire
+      协议，活跃维护，MIT）——internal/realtime 网关：握手鉴权与 REST 同链、按用户/会话进房、
+      连接即发 on_server_version；上传/更新/软删/恢复/硬删/批量操作全部接入实时广播；
+      wire 级测试（其官方 client 模块回环验证握手+事件+拒绝路径）与真机冒烟双通过
 - [ ] 场景词表扩展为可配置（外置 taxonomy 文件或 LLM/VLM 外接分类器）
 - [ ] 本文档随版本演进维护，重大结论变更需注明日期

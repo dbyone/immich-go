@@ -14,7 +14,13 @@ Chinese-CLIP + PaddleOCR，`api-key` 鉴权）——见下文[可插拔 AI](#可
 CLIP/人脸向量、SQL 余弦检索、DBSCAN 人脸聚类（自动生成人物）、CLIP 近重复检测，
 全部内置于单个二进制。**实体元数据（用户/会话/API Key/资产/相册/标签）同样持久化在
 DuckDB**——`<media>/immich.duckdb` 一个文件即服务端的完整状态，重启不丢；无需
-PostgreSQL 与 Redis（`IMMICH_STORE=memory` 可退回易失内存后端）。
+PostgreSQL 与 Redis（单轨 DuckDB 后端）。
+
+**实时网关（Socket.IO）内置**：`/api/socket.io` 由 [zishang520/socket.io](https://github.com/zishang520/socket.io)
+（Socket.IO v4+ wire 协议）驱动——握手走与 REST 相同的凭证链（cookie/Bearer/API Key），
+socket 加入所属用户/会话房间，实时推送 `on_server_version` / `on_upload_success` /
+`on_asset_update` / `on_asset_trash` / `on_asset_restore` / `on_asset_delete`，
+官方 Web 的时间线实时刷新与上传事件即刻可用（`cmd/smokert` 为命令行验证工具）。
 
 **官方 Web 前端已内置**：`web/` 目录 fork 自上游 Immich v3.1.0 的 SvelteKit 应用
 （adapter-static），编译产物经 Go `embed` 打进同一个二进制——启动后浏览器直接访问
@@ -134,7 +140,6 @@ internal/config/        环境变量配置（与上游同名）
 internal/domain/        实体（对齐上游表结构语义）
 internal/store/         持久化接口
 internal/store/duckstore/ DuckDB 实体存储（users/sessions/api_keys/assets/albums）★
-internal/store/memory/  内存后端（IMMICH_STORE=memory）
 internal/vectordb/      DuckDB 向量库（CLIP/人脸向量、SQL 余弦检索、DBSCAN 聚类、近重复检测）★
 internal/auth/          会话/API Key 鉴权（与上游 AuthService.validate 同优先级）
 internal/ml/            AI Provider 层：immich-machine-learning 客户端（wire 级兼容）+ mt-photos-ai 适配器 ★

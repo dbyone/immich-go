@@ -101,7 +101,6 @@ DBSCAN（`vectordb.DBSCAN`）等价实现：
 |---|---|---|
 | `IMMICH_DUCKDB` | `<media>/immich.duckdb` | DuckDB 数据库文件（实体 + 向量） |
 | `IMMICH_VECTOR_DB` | — | 兼容别名（旧版仅向量文件，现指向同一数据库） |
-| `IMMICH_STORE` | `duckdb` | 实体后端：`duckdb`（持久化）或 `memory`（易失） |
 | `IMMICH_VECTOR_DIM` | `512` | 向量维度（须匹配模型） |
 | `IMMICH_CLUSTER_DEBOUNCE_MS` | `5000` | 聚类/去重防抖窗口 |
 | `IMMICH_MACHINE_LEARNING_FACIAL_RECOGNITION_MAX_DISTANCE` | `0.5` | DBSCAN eps |

@@ -9,15 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"immich-go/internal/api"
 	"immich-go/internal/app"
 	"immich-go/internal/config"
-	"immich-go/internal/store"
-	"immich-go/internal/store/memory"
 )
 
 func main() {
@@ -26,13 +23,8 @@ func main() {
 
 	cfg := config.Load()
 
-	// Entities persist to DuckDB by default; IMMICH_STORE=memory opts out
-	// for ephemeral runs.
-	var st store.Store
-	if strings.EqualFold(cfg.Store, "memory") {
-		st = memory.New()
-	}
-	a, err := app.New(cfg, st, logger)
+	// Entities persist to DuckDB — the single supported store.
+	a, err := app.New(cfg, nil, logger)
 	if err != nil {
 		logger.Error("failed to initialize", "err", err)
 		os.Exit(1)

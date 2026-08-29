@@ -165,6 +165,7 @@ func (s *Server) emptyTrash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
+	var deleted []string
 	for _, asset := range assets {
 		if asset.DeletedAt != nil {
 			// Hard delete must clear the vector store too, or orphaned
@@ -176,7 +177,11 @@ func (s *Server) emptyTrash(w http.ResponseWriter, r *http.Request) {
 			s.app.Storage.Remove(asset.OriginalPath)
 			s.app.Storage.Remove(asset.ThumbnailPath)
 			s.app.Storage.Remove(asset.PreviewPath)
+			deleted = append(deleted, asset.ID)
 		}
+	}
+	for _, id := range deleted {
+		s.app.Realtime.BroadcastToUser(a.User.ID, "on_asset_delete", id)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -188,6 +193,7 @@ func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) {
 	}
 	assets, _ := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
 	now := time.Now().UTC()
+	var restored []string
 	for _, asset := range assets {
 		if asset.DeletedAt != nil {
 			_, _ = s.app.UpdateAsset(r.Context(), asset.ID, func(fresh *domain.Asset) error {
@@ -195,7 +201,11 @@ func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) {
 				fresh.UpdatedAt = now
 				return nil
 			})
+			restored = append(restored, asset.ID)
 		}
+	}
+	if len(restored) > 0 {
+		s.app.Realtime.BroadcastToUser(a.User.ID, "on_asset_restore", restored)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -216,6 +226,7 @@ func (s *Server) restoreAssets(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	count := 0
+	var restored []string
 	for _, id := range req.IDs {
 		asset, err := s.app.Store.Assets().Get(r.Context(), id)
 		if err != nil || asset.OwnerID != a.User.ID || asset.DeletedAt == nil {
@@ -227,7 +238,11 @@ func (s *Server) restoreAssets(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}); err == nil {
 			count++
+			restored = append(restored, id)
 		}
+	}
+	if len(restored) > 0 {
+		s.app.Realtime.BroadcastToUser(a.User.ID, "on_asset_restore", restored)
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"count": count})
 }
