@@ -49,6 +49,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/server/media-types", s.serverMediaTypes)
 		r.Get("/public/config", s.getPublicConfig)
 		r.Get("/public/config/defaults", s.getPublicConfigDefaults)
+		// Upstream marks these without any security requirement — the
+		// web client needs them before the first login (init sequence).
+		r.Get("/server/config", s.serverConfig)
+		r.Get("/server/features", s.serverFeatures)
 		r.Post("/auth/login", s.authLogin)
 		r.Post("/auth/admin-sign-up", s.authAdminSignUp)
 
@@ -76,8 +80,6 @@ func (s *Server) Router() http.Handler {
 			r.With(s.perm("server.read")).Get("/server/apk-links", s.serverApkLinks)
 			r.With(s.perm("server.read")).Get("/server/version-check", s.serverVersionCheck)
 			r.With(s.perm("server.read")).Get("/server/about", s.serverAbout)
-			r.With(s.perm("server.read")).Get("/server/config", s.serverConfig)
-			r.With(s.perm("server.read")).Get("/server/features", s.serverFeatures)
 			r.With(s.perm("server.read")).Get("/server/storage", s.serverStorage)
 			r.With(s.perm("adminServer.read")).Get("/server/statistics", s.serverStatistics)
 

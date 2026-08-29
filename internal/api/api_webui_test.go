@@ -70,3 +70,20 @@ func TestEmbeddedWebUI(t *testing.T) {
 		t.Fatal("POST to a client route must not serve HTML")
 	}
 }
+
+// TestServerConfigAndFeaturesArePublic: the web client's init sequence
+// fetches these before the first login — upstream marks them without
+// any security requirement, and a 401 here breaks the onboarding wizard.
+func TestServerConfigAndFeaturesArePublic(t *testing.T) {
+	h := newTestServer(t)
+	for _, path := range []string{"/api/server/config", "/api/server/features"} {
+		res := doRaw(t, h, http.MethodGet, path)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("anonymous GET %s: %d (must be public)", path, res.StatusCode)
+		}
+	}
+	// Contrast: about really does require a session upstream and here.
+	if res := doRaw(t, h, http.MethodGet, "/api/server/about"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous GET /api/server/about: %d (must stay authenticated)", res.StatusCode)
+	}
+}

@@ -1,6 +1,8 @@
 # Binaries
 /immich-go
 /immich-go.exe
+/immich-go.exe~
+*.exe~
 /bin/
 /dist/
 
