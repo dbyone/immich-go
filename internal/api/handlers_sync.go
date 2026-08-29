@@ -191,6 +191,55 @@ func (s *Server) syncStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// EXIF rows ride the asset watermark: every write that touches an
+	// asset (upload, metadata job, tag links) stamps update_id, so the
+	// partner/album exif variants replay the same owner-visible rows.
+	if wanted["AssetExifsV1"] || wanted["PartnerAssetExifsV1"] || wanted["AlbumAssetExifsV1"] {
+		respType := "AssetExifV1"
+		wmKey := "AssetExifV1"
+		switch {
+		case wanted["PartnerAssetExifsV1"] && !wanted["AssetExifsV1"]:
+			respType = "PartnerAssetExifV1"
+			wmKey = "PartnerAssetExifV1"
+		case wanted["AlbumAssetExifsV1"] && !wanted["AssetExifsV1"] && !wanted["PartnerAssetExifsV1"]:
+			respType = "AlbumAssetExifV1"
+			wmKey = "AlbumAssetExifV1"
+		}
+		if assets, err := s.app.Store.Sync().AssetsSince(r.Context(), a.User.ID, since[wmKey], limit); err == nil {
+			for _, asset := range assets {
+				if asset.Exif == nil {
+					continue
+				}
+				write(respType, wmKey+":"+strconv.FormatInt(asset.UpdateID, 10), syncExif(asset))
+			}
+		}
+	}
+
+	if wanted["MemoriesV1"] || wanted["MemoryToAssetsV1"] {
+		memories, err := s.app.Store.Sync().MemoriesSince(r.Context(), a.User.ID,
+			maxWatermark(since["MemoryV1"], since["MemoryAssetV1"]), limit)
+		if err == nil {
+			for _, m := range memories {
+				if wanted["MemoriesV1"] {
+					write("MemoryV1", "MemoryV1:"+strconv.FormatInt(m.UpdateID, 10), syncMemory(m))
+				}
+				if wanted["MemoryToAssetsV1"] {
+					for _, assetID := range m.AssetIDs {
+						write("MemoryAssetV1", "MemoryAssetV1:"+strconv.FormatInt(m.UpdateID, 10), map[string]any{
+							"memoryId": m.ID,
+							"assetId":  assetID,
+						})
+					}
+				}
+			}
+		}
+		if dels, err := s.app.Store.Sync().DeletesSince(r.Context(), []string{"MemoryDeleteV1"}, since["MemoryDeleteV1"], limit); err == nil {
+			for _, d := range dels {
+				write(d.Type, d.Type+":"+strconv.FormatInt(d.UpdateID, 10), map[string]any{"memoryId": d.EntityID})
+			}
+		}
+	}
+
 	if wanted["AlbumsV1"] || wanted["AlbumsV2"] {
 		albumType := "AlbumV1"
 		if wanted["AlbumsV2"] {
@@ -239,4 +288,110 @@ func (s *Server) syncAsset(asset *domain.Asset) map[string]any {
 		"visibility":       asset.Visibility,
 		"checksum":         asset.ChecksumB64,
 	}
+}
+
+// maxWatermark picks the larger of two sync positions.
+func maxWatermark(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// syncExif maps one asset's EXIF row onto the SyncAssetExifV1 wire shape.
+func syncExif(a *domain.Asset) map[string]any {
+	e := a.Exif
+	return map[string]any{
+		"assetId":            a.ID,
+		"description":        nullable(e.Description),
+		"exifImageWidth":     nullableInt(e.ExifWidth),
+		"exifImageHeight":    nullableInt(e.ExifHeight),
+		"fileSizeInByte":     nullableInt64(e.FileSize),
+		"orientation":        nil,
+		"dateTimeOriginal":   isoTimePtr(e.DateTimeOriginal),
+		"modifyDate":         ISOTime(a.UpdatedAt),
+		"timeZone":           nil,
+		"latitude":           nullableFloat(e.Latitude),
+		"longitude":          nullableFloat(e.Longitude),
+		"projectionType":     nil,
+		"city":               nullable(e.City),
+		"state":              nullable(e.State),
+		"country":            nullable(e.Country),
+		"make":               nullable(e.Make),
+		"model":              nullable(e.Model),
+		"lensModel":          nullable(e.LensModel),
+		"fNumber":            nil,
+		"focalLength":        nil,
+		"iso":                nil,
+		"exposureTime":       nil,
+		"profileDescription": nil,
+		"rating":             nullableIntPtr(e.Rating),
+		"fps":                nullableFloatPtr(e.FPS),
+	}
+}
+
+// syncMemory maps a memory onto the SyncMemoryV1 wire shape.
+func syncMemory(m *domain.Memory) map[string]any {
+	var data any
+	if m.Data != "" {
+		data = json.RawMessage(m.Data)
+	} else {
+		data = map[string]any{}
+	}
+	return map[string]any{
+		"id":        m.ID,
+		"createdAt": ISOTime(m.CreatedAt),
+		"updatedAt": ISOTime(m.UpdatedAt),
+		"deletedAt": nil,
+		"ownerId":   m.OwnerID,
+		"type":      m.Type,
+		"data":      data,
+		"isSaved":   m.IsSaved,
+		"memoryAt":  ISOTime(m.MemoryAt),
+		"seenAt":    nil,
+		"showAt":    isoTimePtr(m.ShowAt),
+		"hideAt":    isoTimePtr(m.HideAt),
+	}
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func nullableInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullableIntPtr(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullableInt64(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+func nullableFloat(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullableFloatPtr(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }

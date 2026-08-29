@@ -28,6 +28,15 @@ func (s *Store) nextUpdateID(ctx context.Context) (int64, error) {
 	return id, nil
 }
 
+// nextUpdateIDTx draws the sequence inside a caller-owned transaction.
+func nextUpdateIDTx(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var id int64
+	if err := tx.QueryRowContext(ctx, `SELECT nextval('update_id_seq')`).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 func (s *Store) recordDelete(ctx context.Context, tx *sql.Tx, entityType, entityID string) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO sync_deletes (entity_type, entity_id, update_id)
@@ -329,6 +338,36 @@ func (s *syncStore) AlbumsSince(ctx context.Context, ownerID string, since int64
 	}
 	if err := (*albumStore)(s).loadMembersBatch(ctx, out); err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// MemoriesSince returns memories stamped after the watermark, with their
+// asset membership loaded so the stream can emit MemoryAssetV1 rows.
+func (s *syncStore) MemoriesSince(ctx context.Context, ownerID string, since int64, limit int) ([]*domain.Memory, error) {
+	rows, err := s.ro.QueryContext(ctx, `
+		SELECT `+memoryColumns+` FROM memories
+		WHERE owner_id = ? AND update_id > ?
+		ORDER BY update_id LIMIT ?`, ownerID, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*domain.Memory
+	for rows.Next() {
+		m, err := scanMemory(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, m := range out {
+		if err := (*memoryStore)(s).loadAssets(ctx, m); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

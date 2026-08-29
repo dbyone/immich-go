@@ -21,6 +21,8 @@ PostgreSQL 与 Redis（单轨 DuckDB 后端）。
 socket 加入所属用户/会话房间，实时推送 `on_server_version` / `on_upload_success` /
 `on_asset_update` / `on_asset_trash` / `on_asset_restore` / `on_asset_delete`，
 官方 Web 的时间线实时刷新与上传事件即刻可用（`cmd/smokert` 为命令行验证工具）。
+**增量同步覆盖 AuthUsers/Users/Assets(v1+v2)/Albums/AssetExifs/Memories(+资产成员)/删除墓碑**——
+官方 iOS/Android App 直连可完成登录→备份→浏览→实时刷新主流程（经 App v3.1.0 源码逐点核对）。
 
 **官方 Web 前端已内置**：`web/` 目录 fork 自上游 Immich v3.1.0 的 SvelteKit 应用
 （adapter-static），编译产物经 Go `embed` 打进同一个二进制——启动后浏览器直接访问

@@ -128,5 +128,8 @@ timeline 可见性过滤），官方 Web 的 Folders 页直接可用——MT 的
       协议，活跃维护，MIT）——internal/realtime 网关：握手鉴权与 REST 同链、按用户/会话进房、
       连接即发 on_server_version；上传/更新/软删/恢复/硬删/批量操作全部接入实时广播；
       wire 级测试（其官方 client 模块回环验证握手+事件+拒绝路径）与真机冒烟双通过
+- [x] sync 流补齐（2026-08-29）：AssetExifV1（含 Partner/Album 变体）随资产水位增量下发，
+      MemoryV1/MemoryAssetV1/MemoryDeleteV1 墓碑（memories 表补 update_id 戳与写入）；
+      官方 App 的离线 EXIF/回忆缓存缺口闭合（types: assetExifsV1/memoriesV1/memoryToAssetsV1）
 - [ ] 场景词表扩展为可配置（外置 taxonomy 文件或 LLM/VLM 外接分类器）
 - [ ] 本文档随版本演进维护，重大结论变更需注明日期

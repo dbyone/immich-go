@@ -172,6 +172,7 @@ type Memory struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt *time.Time
+	UpdateID  int64
 }
 
 // SyncAck is one acknowledged sync entity ("<Type>:<updateId>" pairs).

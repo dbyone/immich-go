@@ -139,6 +139,7 @@ type SyncStore interface {
 	// exceeds the watermark, ascending.
 	AssetsSince(ctx context.Context, ownerID string, since int64, limit int) ([]*domain.Asset, error)
 	AlbumsSince(ctx context.Context, ownerID string, since int64, limit int) ([]*domain.Album, error)
+	MemoriesSince(ctx context.Context, ownerID string, since int64, limit int) ([]*domain.Memory, error)
 	UsersSince(ctx context.Context, since int64, limit int) ([]*domain.User, error)
 	// DeletesSince returns tombstones recorded after the watermark.
 	DeletesSince(ctx context.Context, types []string, since int64, limit int) ([]domain.SyncDelete, error)

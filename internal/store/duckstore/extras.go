@@ -14,7 +14,7 @@ import (
 type memoryStore Store
 
 const memoryColumns = `id, owner_id, type, data, memory_at, show_at, hide_at, seen_at,
-	is_saved, created_at, updated_at, deleted_at`
+	is_saved, created_at, updated_at, deleted_at, update_id`
 
 type rowScanner2 interface{ Scan(...any) error }
 
@@ -22,7 +22,7 @@ func scanMemory(scanner rowScanner2) (*domain.Memory, error) {
 	var m domain.Memory
 	var show, hide, seen, deleted sql.NullTime
 	if err := scanner.Scan(&m.ID, &m.OwnerID, &m.Type, &m.Data, &m.MemoryAt,
-		&show, &hide, &seen, &m.IsSaved, &m.CreatedAt, &m.UpdatedAt, &deleted); err != nil {
+		&show, &hide, &seen, &m.IsSaved, &m.CreatedAt, &m.UpdatedAt, &deleted, &m.UpdateID); err != nil {
 		return nil, err
 	}
 	if show.Valid {
@@ -46,10 +46,15 @@ func scanMemory(scanner rowScanner2) (*domain.Memory, error) {
 
 func (s *memoryStore) Create(ctx context.Context, m *domain.Memory) error {
 	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
+		uid, err := nextUpdateIDTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		m.UpdateID = uid
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO memories (`+memoryColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO memories (`+memoryColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			m.ID, m.OwnerID, m.Type, m.Data, m.MemoryAt, m.ShowAt, m.HideAt, m.SeenAt,
-			m.IsSaved, m.CreatedAt, m.UpdatedAt, m.DeletedAt); err != nil {
+			m.IsSaved, m.CreatedAt, m.UpdatedAt, m.DeletedAt, m.UpdateID); err != nil {
 			return err
 		}
 		return writeMemoryAssets(ctx, tx, m)
@@ -58,13 +63,18 @@ func (s *memoryStore) Create(ctx context.Context, m *domain.Memory) error {
 
 func (s *memoryStore) Update(ctx context.Context, m *domain.Memory) error {
 	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
+		uid, err := nextUpdateIDTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		m.UpdateID = uid
 		res, err := tx.ExecContext(ctx, `
 			UPDATE memories SET
 				type = ?, data = ?, memory_at = ?, show_at = ?, hide_at = ?, seen_at = ?,
-				is_saved = ?, updated_at = ?, deleted_at = ?
+				is_saved = ?, updated_at = ?, deleted_at = ?, update_id = ?
 			WHERE id = ?`,
 			m.Type, m.Data, m.MemoryAt, m.ShowAt, m.HideAt, m.SeenAt,
-			m.IsSaved, m.UpdatedAt, m.DeletedAt, m.ID)
+			m.IsSaved, m.UpdatedAt, m.DeletedAt, m.UpdateID, m.ID)
 		if err != nil {
 			return err
 		}
@@ -109,6 +119,9 @@ func (s *memoryStore) Delete(ctx context.Context, id string) error {
 		}
 		res, err := tx.ExecContext(ctx, `DELETE FROM memories WHERE id = ?`, id)
 		if err != nil {
+			return err
+		}
+		if err := (*Store)(s).recordDelete(ctx, tx, "MemoryDeleteV1", id); err != nil {
 			return err
 		}
 		return rowsAffected(res, 1)
