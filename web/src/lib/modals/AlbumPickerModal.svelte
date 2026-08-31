@@ -1,5 +1,6 @@
 <script lang="ts">
   import { initInput } from '$lib/actions/focus';
+  import { goto } from '$app/navigation';
   import {
     AlbumModalRowConverter,
     AlbumModalRowType,
@@ -43,6 +44,14 @@
   const selectableRowCount = $derived(albumModalRows.filter((row) => isSelectableRowType(row.type)).length);
 
   const onNewAlbum = async (name: string) => {
+    if (!name) {
+      // immich-go fork: no search term means no implicit album name —
+      // route to the full creation page (name/description/photo picker)
+      // instead of creating an unnamed album.
+      await goto('/albums/new');
+      onClose();
+      return;
+    }
     const album = await createAlbum({ createAlbumDto: { albumName: name } });
     eventManager.emit('AlbumCreate', album);
     onClose([album]);

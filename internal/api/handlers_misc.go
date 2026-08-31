@@ -289,6 +289,43 @@ func (s *Server) mapMarkers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// albumMapMarkers backs the album page's map button: the same marker shape
+// as /api/map/markers but scoped to one album's assets.
+func (s *Server) albumMapMarkers(w http.ResponseWriter, r *http.Request) {
+	a := caller(w, r)
+	if a == nil {
+		return
+	}
+	al, err := s.app.Store.Albums().Get(r.Context(), chiURLParam(r, "id"))
+	if err != nil || !s.canSeeAlbum(r, al) {
+		writeError(w, http.StatusNotFound, "Not found")
+		return
+	}
+	inAlbum := map[string]bool{}
+	for _, id := range al.AssetIDs {
+		inAlbum[id] = true
+	}
+	assets, err := s.app.Store.Assets().ListForOwner(r.Context(), a.User.ID)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	out := []mapMarker{}
+	for _, asset := range assets {
+		if !inAlbum[asset.ID] || asset.DeletedAt != nil || asset.Exif == nil ||
+			asset.Exif.Latitude == nil || asset.Exif.Longitude == nil {
+			continue
+		}
+		e := asset.Exif
+		lat, lon := maptile.FixCoord(s.app.Cfg.Map.Provider, *e.Latitude, *e.Longitude)
+		out = append(out, mapMarker{
+			ID: asset.ID, Lat: lat, Lon: lon,
+			City: e.City, State: e.State, Country: e.Country,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // reverseGeocode would consult local geodata upstream; without it we
 // answer an empty list so clients degrade gracefully.
 func (s *Server) reverseGeocode(w http.ResponseWriter, r *http.Request) {

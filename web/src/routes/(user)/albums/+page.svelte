@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { scrollMemory } from '$lib/actions/scroll-memory';
   import AlbumsControls from './AlbumsControls.svelte';
   import Albums from '$lib/components/album-page/AlbumsList.svelte';
@@ -8,7 +9,6 @@
   import SearchBar from '$lib/elements/SearchBar.svelte';
   import { Route } from '$lib/route';
   import { AlbumFilter, albumViewSettings } from '$lib/stores/preferences.store';
-  import { createAlbumAndRedirect } from '$lib/utils/album-utils';
   import { t } from 'svelte-i18n';
   import type { PageData } from './$types';
 
@@ -52,7 +52,7 @@
     bind:albumGroupIds={albumGroups}
   >
     {#snippet empty()}
-      <EmptyPlaceholder text={$t('no_albums_message')} onClick={() => createAlbumAndRedirect()} class="mx-auto mt-10" />
+      <EmptyPlaceholder text={$t('no_albums_message')} onClick={() => goto('/albums/new')} class="mx-auto mt-10" />
     {/snippet}
   </Albums>
 </UserPageLayout>

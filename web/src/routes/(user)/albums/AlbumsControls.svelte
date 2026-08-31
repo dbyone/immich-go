@@ -1,5 +1,6 @@
 <script lang="ts">
   import Dropdown from '$lib/elements/Dropdown.svelte';
+  import { goto } from '$app/navigation';
   import GroupTab from '$lib/elements/GroupTab.svelte';
   import SearchBar from '$lib/elements/SearchBar.svelte';
   import {
@@ -130,7 +131,7 @@
 <!-- Create Album -->
 <Button
   leadingIcon={mdiPlusBoxOutline}
-  onclick={() => createAlbumAndRedirect()}
+  onclick={() => goto('/albums/new')}
   size="small"
   variant="ghost"
   color="secondary"

@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -120,6 +123,7 @@ func (s *Server) Router() http.Handler {
 			r.With(s.perm("album.update")).Put("/albums/assets", s.addAssetsToAlbums)
 			r.With(s.perm("album.read")).Get("/albums/statistics", s.albumStatistics)
 			r.With(s.perm("album.read")).Get("/albums/{id}", s.getAlbum)
+			r.With(s.perm("album.read")).Get("/albums/{id}/map-markers", s.albumMapMarkers)
 			r.With(s.perm("album.update")).Patch("/albums/{id}", s.updateAlbum)
 			r.With(s.perm("album.delete")).Delete("/albums/{id}", s.deleteAlbum)
 			r.With(s.perm("album.update")).Put("/albums/{id}/assets", s.addAssetsToAlbum)
@@ -244,6 +248,7 @@ func (s *Server) Router() http.Handler {
 	// static assets and the SPA fallback live outside /api, so the API's
 	// JSON 404 semantics stay untouched.
 	r.Get("/", s.serveWebUI)
+	r.Get("/custom.css", s.serveCustomCSS)
 	r.Get("/*", s.serveWebUI)
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -260,6 +265,20 @@ func (s *Server) Router() http.Handler {
 // serveWebUI delegates to the embedded SPA handler.
 func (s *Server) serveWebUI(w http.ResponseWriter, r *http.Request) {
 	webui.Handler().ServeHTTP(w, r)
+}
+
+// serveCustomCSS backs the web client's optional theme override: the app
+// always links /custom.css, so it must answer as CSS — an HTML SPA fallback
+// here trips the browser's strict MIME check and pollutes the console.
+// A user-provided {media}/custom.css wins; otherwise serve empty CSS.
+func (s *Server) serveCustomCSS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	if data, err := os.ReadFile(filepath.Join(s.app.Cfg.MediaLocation, "custom.css")); err == nil {
+		_, _ = w.Write(data)
+		return
+	}
+	_, _ = w.Write(nil)
 }
 
 // serveSocketIO delegates the Engine.IO/Socket.IO endpoint.
@@ -283,16 +302,26 @@ func (s *Server) bodyLimit(next http.Handler) http.Handler {
 	})
 }
 
-// accessLog records client-error responses so missing-contract calls
-// surface in the server log instead of only as browser toasts. The
+// accessLog records client-error and slow responses so missing-contract
+// calls surface in the server log instead of only as browser toasts. The
 // wrapper must keep the Hijacker/Flusher interfaces alive — the
-// websocket upgrade path depends on them.
+// websocket upgrade path depends on them. Set IMMICH_DEBUG_HTTP=1 to also
+// trace every request start, which exposes requests that never complete.
 func (s *Server) accessLog(next http.Handler) http.Handler {
+	debugTrace := os.Getenv("IMMICH_DEBUG_HTTP") != ""
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		if debugTrace {
+			s.app.Log.Info("request start", "method", r.Method, "path", r.URL.Path)
+		}
 		rec := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(rec, r)
-		if rec.Status() >= 400 {
-			s.app.Log.Warn("client error", "method", r.Method, "path", r.URL.Path, "status", rec.Status())
+		dur := time.Since(start)
+		switch {
+		case rec.Status() >= 400:
+			s.app.Log.Warn("client error", "method", r.Method, "path", r.URL.Path, "status", rec.Status(), "dur", dur)
+		case dur > time.Second:
+			s.app.Log.Warn("slow request", "method", r.Method, "path", r.URL.Path, "status", rec.Status(), "dur", dur)
 		}
 	})
 }

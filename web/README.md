@@ -23,12 +23,23 @@ Local modifications (all under this fork):
 - `src/routes/(user)/utilities/duplicates/.../+page.svelte`: "only
   exact duplicates" toggle calling `GET /api/duplicates?exact=true`
   (MT Photos' MD5 filter, immich-go extension).
-- `i18n/{en,zh_Hans,zh_Hant}.json`: one new key (`exact_duplicates_only`).
+- `i18n/{en,zh_Hans,zh_Hant}.json`: new keys (`exact_duplicates_only`,
+  plus keys reused from upstream for the album creation page).
+- `src/routes/(user)/albums/new/+page{.ts,.svelte}`: MT Photos-style album
+  creation page — name and description inputs plus a photo multi-select
+  grid (thumbnail picker with counter/deselect-all) that creates the album
+  with the chosen assets and navigates to it. The albums page "create"
+  button, the empty-state placeholder and the album picker's new-album
+  entry all route here instead of quick-creating an unnamed album.
 - `src/lib/components/shared-components/side-bar/UserSidebar.svelte`: nav
   reorganized to the MT Photos layout (photos/explore/map/sharing/folders/
   albums/tags/utilities/trash); standalone people, shared-links,
   favorites, archive and locked-folder entries removed (people/places
   stay reachable via Explore; those routes themselves are untouched).
+- Album renaming uses the upstream inline-editable album title on the
+  album detail page (the server now returns the owner as an
+  `albumUsers` entry with role `owner`, matching upstream's data model,
+  which the web client requires).
 - `embed.go`: Go embed of `build/` so the compiled SPA ships inside the
   immich-go binary (build with `corepack pnpm run build` in this
   directory; the output is committed for CI/Docker builds without Node).

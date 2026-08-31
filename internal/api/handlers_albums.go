@@ -31,8 +31,13 @@ func (s *Server) albumResponse(r *http.Request, al *domain.Album, withAssets boo
 		resp.Order = "asc"
 	}
 
+	// Upstream keeps the owner as an album_user row with role=owner
+	// (unique partial index album_user_unique_owner); the web client reads
+	// albumUsers[0].user.id as the owner test and computes "shared" as
+	// albumUsers.length > 1. Mirror that shape: owner first, then sharees.
 	if owner, err := s.app.Store.Users().Get(ctx, al.OwnerID); err == nil {
 		resp.Owner = userResponsePtr(owner)
+		resp.AlbumUsers = append(resp.AlbumUsers, AlbumUserResponse{Role: domain.AlbumRoleOwner, User: userResponse(owner)})
 	}
 	for _, au := range al.Users {
 		if u, err := s.app.Store.Users().Get(ctx, au.UserID); err == nil {
@@ -101,6 +106,15 @@ func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 	if a == nil {
 		return
 	}
+	// Upstream filters via query params; the web albums page asks for the
+	// owned list and the shared-with-me list separately and renders both.
+	// Returning unfiltered albums for each call duplicates every album
+	// across the two lists and crashes the client (Svelte each_key_duplicate).
+	q := r.URL.Query()
+	isOwned := q.Get("isOwned") == "true"
+	isShared := q.Get("isShared") == "true" || q.Get("shared") == "true"
+	assetID := q.Get("assetId")
+
 	albums, err := s.app.Store.Albums().List(r.Context())
 	if err != nil {
 		s.storeError(w, err)
@@ -108,9 +122,37 @@ func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []AlbumResponse{}
 	for _, al := range albums {
-		if s.canSeeAlbum(r, al) {
-			out = append(out, s.albumResponse(r, al, false))
+		if !s.canSeeAlbum(r, al) {
+			continue
 		}
+		if isOwned && al.OwnerID != a.User.ID {
+			continue
+		}
+		if isShared {
+			shared := false
+			for _, u := range al.Users {
+				if u.UserID == a.User.ID {
+					shared = true
+					break
+				}
+			}
+			if !shared {
+				continue
+			}
+		}
+		if assetID != "" {
+			found := false
+			for _, id := range al.AssetIDs {
+				if id == assetID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		out = append(out, s.albumResponse(r, al, false))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

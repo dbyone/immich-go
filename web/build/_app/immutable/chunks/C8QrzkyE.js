@@ -1,0 +1,1 @@
+import{ut as e}from"./B67yn771.js";import{t}from"./DW0WwdAn.js";import{i as n,n as r}from"./DVe-SrRC.js";import{r as i}from"./DJsuGkQh.js";var a=async a=>{let o=await i();try{return await e({jobCreateDto:a}),t.emit(`JobCreate`,{dto:a}),n.primary(o(`admin.job_created`)),!0}catch(e){r(e,o(`errors.unable_to_submit_job`))}};export{a as t};
