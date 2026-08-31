@@ -15,11 +15,11 @@ const defaultPreferences = `{
 	"emailNotifications": {"albumInvite": true, "albumUpdate": true, "enabled": true},
 	"folders": {"enabled": true, "sidebarWeb": true},
 	"memories": {"duration": 5259600, "enabled": true, "sidebarWeb": true},
-	"people": {"enabled": true, "minimumFaces": 3, "sidebarWeb": true},
+	"people": {"enabled": true, "minimumFaces": 3, "sidebarWeb": false},
 	"purchase": {"hideBuyButtonUntil": "", "showSupportBadge": true},
 	"ratings": {"enabled": false},
 	"recentlyAdded": {"sidebarWeb": false},
-	"sharedLinks": {"enabled": true},
+	"sharedLinks": {"enabled": true, "sidebarWeb": false},
 	"tags": {"enabled": true, "sidebarWeb": true}
 }`
 

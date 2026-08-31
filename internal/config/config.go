@@ -101,6 +101,14 @@ type Config struct {
 	SessionTTL time.Duration
 
 	MachineLearning MachineLearning
+
+	// Map selects the basemap dialect: "osm" (default, Immich-hosted
+	// vector styles) or "amap" (Gaode raster tiles for mainland China;
+	// photo coordinates shift onto GCJ-02 inside China only).
+	Map struct {
+		Provider string
+		AMAPKey  string // reserved for AMap REST services (geocoding)
+	}
 }
 
 func env(key, def string) string {
@@ -178,6 +186,9 @@ func Load() *Config {
 
 	ml.DuplicateDetection.Enabled = envBool("IMMICH_MACHINE_LEARNING_DUPLICATE_DETECTION_ENABLED", true)
 	ml.DuplicateDetection.MaxDistance = envFloat("IMMICH_MACHINE_LEARNING_DUPLICATE_DETECTION_MAX_DISTANCE", 0.01)
+
+	c.Map.Provider = strings.ToLower(env("IMMICH_MAP_PROVIDER", "osm"))
+	c.Map.AMAPKey = env("IMMICH_MAP_AMAP_KEY", "")
 
 	ml.OCR.Enabled = envBool("IMMICH_MACHINE_LEARNING_OCR_ENABLED", true)
 	ml.OCR.ModelName = env("IMMICH_MACHINE_LEARNING_OCR_MODEL", "PP-OCRv5_mobile")

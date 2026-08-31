@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"immich-go/internal/maptile"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -99,13 +101,36 @@ func (s *Server) serverConfig(w http.ResponseWriter, r *http.Request) {
 		UserDeleteDelay:  7,
 		MinFaces:         s.minFaces(),
 		PublicUsers:      true,
-		MapLightStyleURL: "https://tiles.immich.cloud/v1/style/light.json",
-		MapDarkStyleURL:  "https://tiles.immich.cloud/v1/style/dark.json",
+		MapLightStyleURL: maptile.StyleURL(s.app.Cfg.Map.Provider, "light", origin(r)),
+		MapDarkStyleURL:  maptile.StyleURL(s.app.Cfg.Map.Provider, "dark", origin(r)),
 		OAuthButtonText:  "Login with OAuth",
 	})
 }
 
 func (s *Server) minFaces() int { return 3 }
+
+// origin rebuilds this server's scheme://host from the request.
+func origin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
+		scheme = fwd
+	}
+	return scheme + "://" + r.Host
+}
+
+// mapStyle serves the maplibre style document for the configured
+// basemap provider (the AMap dialect points mapLight/DarkStyleUrl here).
+func (s *Server) mapStyle(w http.ResponseWriter, r *http.Request) {
+	theme := chiURLParam(r, "theme")
+	if theme != "light" && theme != "dark" {
+		writeError(w, http.StatusNotFound, "unknown map style")
+		return
+	}
+	maptile.WriteStyle(w, s.app.Cfg.Map.Provider, theme)
+}
 
 func (s *Server) serverFeatures(w http.ResponseWriter, _ *http.Request) {
 	ml := s.app.Cfg.MachineLearning

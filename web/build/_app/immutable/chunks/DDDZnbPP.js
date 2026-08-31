@@ -1,0 +1,1 @@
+import{Ct as e,en as t,qt as n}from"./CjOemer8.js";import{t as r}from"./D5oRLfF1.js";var i=new class{#e=t(()=>r.isFullSidebar);get isOpen(){return e(this.#e)}set isOpen(e){n(this.#e,e)}reset(){this.isOpen=r.isFullSidebar}toggle(){this.isOpen=r.isFullSidebar?!0:!this.isOpen}};export{i as t};

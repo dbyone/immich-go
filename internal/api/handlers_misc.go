@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"immich-go/internal/domain"
+	"immich-go/internal/maptile"
 	"immich-go/internal/store"
 )
 
@@ -279,8 +280,9 @@ func (s *Server) mapMarkers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		e := asset.Exif
+		lat, lon := maptile.FixCoord(s.app.Cfg.Map.Provider, *e.Latitude, *e.Longitude)
 		out = append(out, mapMarker{
-			ID: asset.ID, Lat: *e.Latitude, Lon: *e.Longitude,
+			ID: asset.ID, Lat: lat, Lon: lon,
 			City: e.City, State: e.State, Country: e.Country,
 		})
 	}

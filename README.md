@@ -121,6 +121,24 @@ IMMICH_SCENE_CLASSIFICATION_TOP_K=3          # 每资产最多标签数
 方言嵌入中文（Chinese-CLIP 原生），命中的标签自动写入层级标签 `场景/<中文>`
 （Immich Web 的 Tags 页与 metadata 搜索 `tagIds` 过滤即可消费）。
 
+### 地图底图切换（国内高德 / 国外 OSM）
+
+```bash
+IMMICH_MAP_PROVIDER=amap   # osm（默认，Immich 官方矢量底图）| amap（高德瓦片）
+IMMICH_MAP_AMAP_KEY=xxx    # 预留：高德 REST 服务（逆地理等）所用，瓦片不需要 key
+```
+
+`amap` 模式下：`serverConfig` 的 `mapLightStyleUrl/mapDarkStyleUrl` 指向本服务
+`/api/server/map-style/{light,dark}`（高德 raster 瓦片，浅色=街道图 style7 / 深色=卫星图 style6）；
+**地图标记点在中国大陆范围内自动做 WGS-84→GCJ-02 偏移**（与高德底图坐标系对齐），
+境外坐标保持原样——"国内切高德、国外维持原状"。`osm` 模式维持上游默认（tiles.immich.cloud），
+标记点恒等变换。
+
+### 侧边栏（MT Photos 布局）
+
+左侧导航按 MT Photos 习惯组织：**照片 / 探索 / 地图 / 分享 / 文件夹 / 相册 / 标签 / 工具 / 回收站**。
+人物与地点收纳进"探索"页；收藏/归档/加密相册不再占据一级导航（页面路由仍可用）。
+
 ### immich-go 扩展端点（官方客户端不依赖，工具可用）
 
 | 端点 | 作用 |

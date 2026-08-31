@@ -24,6 +24,11 @@ Local modifications (all under this fork):
   exact duplicates" toggle calling `GET /api/duplicates?exact=true`
   (MT Photos' MD5 filter, immich-go extension).
 - `i18n/{en,zh_Hans,zh_Hant}.json`: one new key (`exact_duplicates_only`).
+- `src/lib/components/shared-components/side-bar/UserSidebar.svelte`: nav
+  reorganized to the MT Photos layout (photos/explore/map/sharing/folders/
+  albums/tags/utilities/trash); standalone people, shared-links,
+  favorites, archive and locked-folder entries removed (people/places
+  stay reachable via Explore; those routes themselves are untouched).
 - `embed.go`: Go embed of `build/` so the compiled SPA ships inside the
   immich-go binary (build with `corepack pnpm run build` in this
   directory; the output is committed for CI/Docker builds without Node).

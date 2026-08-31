@@ -54,6 +54,7 @@ func (s *Server) Router() http.Handler {
 		// web client needs them before the first login (init sequence).
 		r.Get("/server/config", s.serverConfig)
 		r.Get("/server/features", s.serverFeatures)
+		r.Get("/server/map-style/{theme}", s.mapStyle)
 		r.Post("/auth/login", s.authLogin)
 		r.Post("/auth/admin-sign-up", s.authAdminSignUp)
 

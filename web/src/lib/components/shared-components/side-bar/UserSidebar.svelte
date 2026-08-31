@@ -11,18 +11,10 @@
     mdiAccount,
     mdiAccountMultiple,
     mdiAccountMultipleOutline,
-    mdiAccountOutline,
-    mdiArchiveArrowDown,
-    mdiArchiveArrowDownOutline,
     mdiFolderOutline,
-    mdiHeart,
-    mdiHeartOutline,
     mdiImageAlbum,
     mdiImageMultiple,
     mdiImageMultipleOutline,
-    mdiLink,
-    mdiLock,
-    mdiLockOutline,
     mdiMagnify,
     mdiMap,
     mdiMapOutline,
@@ -48,14 +40,8 @@
     <NavbarItem title={$t('map')} href={Route.map()} icon={mdiMapOutline} activeIcon={mdiMap} />
   {/if}
 
-  {#if authManager.preferences.people.enabled && authManager.preferences.people.sidebarWeb}
-    <NavbarItem title={$t('people')} href={Route.people()} icon={mdiAccountOutline} activeIcon={mdiAccount} />
-  {/if}
-
-  {#if authManager.preferences.sharedLinks.enabled && authManager.preferences.sharedLinks.sidebarWeb}
-    <NavbarItem title={$t('shared_links')} href={Route.sharedLinks()} icon={mdiLink} />
-  {/if}
-
+  <!-- immich-go fork: people/places live inside Explore (MT-style nav);
+       shared links are not implemented, so no dead entry. -->
   <NavbarItem
     title={$t('sharing')}
     href={Route.sharing()}
@@ -63,9 +49,11 @@
     activeIcon={mdiAccountMultiple}
   />
 
-  <NavbarGroup title={$t('library')} size="tiny" />
+  {#if authManager.preferences.folders.enabled && authManager.preferences.folders.sidebarWeb}
+    <NavbarItem title={$t('folders')} href={Route.folders()} icon={{ icon: mdiFolderOutline, flipped: true }} />
+  {/if}
 
-  <NavbarItem title={$t('favorites')} href={Route.favorites()} icon={mdiHeartOutline} activeIcon={mdiHeart} />
+  <NavbarGroup title={$t('library')} size="tiny" />
 
   <NavbarItem
     title={$t('albums')}
@@ -92,20 +80,7 @@
     />
   {/if}
 
-  {#if authManager.preferences.folders.enabled && authManager.preferences.folders.sidebarWeb}
-    <NavbarItem title={$t('folders')} href={Route.folders()} icon={{ icon: mdiFolderOutline, flipped: true }} />
-  {/if}
-
   <NavbarItem title={$t('utilities')} href={Route.utilities()} icon={mdiToolboxOutline} activeIcon={mdiToolbox} />
-
-  <NavbarItem
-    title={$t('archive')}
-    href={Route.archive()}
-    icon={mdiArchiveArrowDownOutline}
-    activeIcon={mdiArchiveArrowDown}
-  />
-
-  <NavbarItem title={$t('locked_folder')} href={Route.locked()} icon={mdiLockOutline} activeIcon={mdiLock} />
 
   {#if featureFlagsManager.value.trash}
     <NavbarItem title={$t('trash')} href={Route.trash()} icon={mdiTrashCanOutline} activeIcon={mdiTrashCan} />
