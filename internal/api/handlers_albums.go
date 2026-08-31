@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"immich-go/internal/auth"
@@ -134,9 +133,13 @@ func (s *Server) createAlbum(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermission(w, r, "album.create") {
 		return
 	}
+	// Upstream validates albumName as a plain z.string() — an empty name
+	// is legal there (the web client creates albums with albumName: ""
+	// from the quick-create flow and renders them as "unnamed album");
+	// rejecting it broke album creation with a 400.
 	var req createAlbumRequest
-	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.AlbumName) == "" {
-		writeError(w, http.StatusBadRequest, "albumName is required")
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
 

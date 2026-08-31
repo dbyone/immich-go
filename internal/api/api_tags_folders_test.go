@@ -418,3 +418,31 @@ func TestSceneClassificationPipeline(t *testing.T) {
 
 // contextTODO avoids importing context just for two seeding calls.
 func contextTODO() context.Context { return context.Background() }
+
+// TestCreateAlbumEmptyNameAllowed: upstream validates albumName as plain
+// z.string() — the web quick-create flow posts albumName:"" and renders
+// such albums as "unnamed album". Rejecting the empty name broke album
+// creation with a 400.
+func TestCreateAlbumEmptyNameAllowed(t *testing.T) {
+	h := newTestServer(t)
+	token := loginForTest(t, h, "albumempty@t.c")
+
+	code, body := doJSON(t, h, http.MethodPost, "/api/albums", token,
+		map[string]any{"albumName": ""})
+	if code != http.StatusCreated {
+		t.Fatalf("empty-name album: %d %v (want 201)", code, body)
+	}
+	album := asMap(t, body)
+	id := album["id"].(string)
+
+	// It lists and can be renamed afterwards.
+	code, body = doJSON(t, h, http.MethodGet, "/api/albums", token, nil)
+	if code != http.StatusOK || len(body.([]any)) != 1 {
+		t.Fatalf("list albums: %d %v", code, body)
+	}
+	code, body = doJSON(t, h, http.MethodPatch, "/api/albums/"+id, token,
+		map[string]any{"albumName": "旅行 2026"})
+	if code != http.StatusOK || asMap(t, body)["albumName"] != "旅行 2026" {
+		t.Fatalf("rename album: %d %v", code, body)
+	}
+}
