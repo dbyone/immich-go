@@ -208,6 +208,11 @@ func (s *Server) createAlbum(w http.ResponseWriter, r *http.Request) {
 			al.AssetIDs = append(al.AssetIDs, id)
 		}
 	}
+	// Upstream seeds the album cover from the first asset; without this the
+	// web album list renders the no-thumbnail placeholder for every album.
+	if len(al.AssetIDs) > 0 {
+		al.AlbumThumbnailAssetID = &al.AssetIDs[0]
+	}
 	for _, au := range req.AlbumUsers {
 		if au.UserID != "" {
 			role := au.Role
@@ -347,6 +352,11 @@ func (s *Server) addAssetsToAlbum(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, res)
 	}
+	// Seed the cover the first time assets land in the album (upstream
+	// behavior); an explicit PATCH albumThumbnailAssetId still wins later.
+	if al.AlbumThumbnailAssetID == nil && len(al.AssetIDs) > 0 {
+		al.AlbumThumbnailAssetID = &al.AssetIDs[0]
+	}
 	al.UpdatedAt = time.Now().UTC()
 	err = s.app.Store.Albums().Update(r.Context(), al)
 	s.albumMu.Unlock()
@@ -403,6 +413,15 @@ func (s *Server) removeAssetsFromAlbum(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	al.AssetIDs = kept
+	// Keep the cover valid when its asset leaves the album: fall back to
+	// the first remaining asset, or clear it for an empty album.
+	if al.AlbumThumbnailAssetID != nil && !al.HasAsset(*al.AlbumThumbnailAssetID) {
+		if len(al.AssetIDs) > 0 {
+			al.AlbumThumbnailAssetID = &al.AssetIDs[0]
+		} else {
+			al.AlbumThumbnailAssetID = nil
+		}
+	}
 	al.UpdatedAt = time.Now().UTC()
 	err = s.app.Store.Albums().Update(r.Context(), al)
 	s.albumMu.Unlock()

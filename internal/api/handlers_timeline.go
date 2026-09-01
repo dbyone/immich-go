@@ -149,12 +149,19 @@ func (s *Server) timelineBucket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// parseBucketKey accepts both the date-only form the mobile client sends
+// (2026-06-01) and the full ISO timestamps the web client sends
+// (2026-06-01T00:00:00.000Z). Falling back to time.Now() on a parse error
+// silently matched the *current* month, which emptied every bucket the day
+// the month rolled over.
 func parseBucketKey(s string) time.Time {
-	t, err := time.Parse("2006-01-02", s)
-	if err != nil {
-		return time.Now().UTC()
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t
 	}
-	return t
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	return time.Now().UTC()
 }
 
 // --- trash ---

@@ -409,3 +409,17 @@ func TestBulkUploadCheckReportsTrashed(t *testing.T) {
 		t.Fatalf("trashed duplicate must reject with isTrashed: %v", res)
 	}
 }
+
+// TestTimelineBucketISOTimestamp: the web client sends timeBucket as a full
+// ISO timestamp (2026-06-01T00:00:00.000Z) while the mobile app sends the
+// date-only form. A parse fallback to time.Now() made every bucket request
+// resolve to the *current* month, so the timeline emptied the day the month
+// rolled over. Both forms must resolve to the requested month.
+func TestTimelineBucketISOTimestamp(t *testing.T) {
+	if got := bucketKey(parseBucketKey("2026-06-01")); got != "2026-06-01" {
+		t.Fatalf("date-only form: %s", got)
+	}
+	if got := bucketKey(parseBucketKey("2026-06-01T00:00:00.000Z")); got != "2026-06-01" {
+		t.Fatalf("ISO timestamp form: %s", got)
+	}
+}
