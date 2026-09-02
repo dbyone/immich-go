@@ -280,8 +280,10 @@ func (s *Server) canSeeAsset(r *http.Request, asset *domain.Asset) bool {
 }
 
 type updateAssetRequest struct {
-	IsFavorite *bool   `json:"isFavorite"`
-	Visibility *string `json:"visibility"`
+	IsFavorite *bool    `json:"isFavorite"`
+	Visibility *string  `json:"visibility"`
+	Latitude   *float64 `json:"latitude"`
+	Longitude  *float64 `json:"longitude"`
 }
 
 func (s *Server) updateAsset(w http.ResponseWriter, r *http.Request) {
@@ -311,6 +313,21 @@ func (s *Server) updateAsset(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Visibility != nil {
 			asset.Visibility = *req.Visibility
+		}
+		// Manual location edit from the asset detail panel: the web picker
+		// (and mobile clients) send WGS-84 coordinates, which live in the
+		// EXIF record; the response carries the updated exifInfo so the
+		// detail panel map re-renders immediately.
+		if req.Latitude != nil || req.Longitude != nil {
+			if asset.Exif == nil {
+				asset.Exif = &domain.AssetExif{}
+			}
+			if req.Latitude != nil {
+				asset.Exif.Latitude = req.Latitude
+			}
+			if req.Longitude != nil {
+				asset.Exif.Longitude = req.Longitude
+			}
 		}
 		asset.UpdatedAt = time.Now().UTC()
 		return nil

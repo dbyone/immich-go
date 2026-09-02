@@ -7,6 +7,7 @@
   import { timeDebounceOnSearch, timeToLoadTheMap } from '$lib/constants';
   import SearchBar from '$lib/elements/SearchBar.svelte';
   import { geolocationManager } from '$lib/managers/geolocation.manager.svelte';
+  import { serverConfigManager } from '$lib/managers/server-config-manager.svelte';
   import type { LatLng } from '$lib/types';
   import { delay } from '$lib/utils/asset-utils';
   import { handleError } from '$lib/utils/handle-error';
@@ -58,10 +59,66 @@
   const handleConfirm = (confirmed?: boolean) => {
     if (point && confirmed) {
       geolocationManager.onSelected(point);
-      onClose(point);
+      onClose(toWGS84(point));
     } else {
       onClose();
     }
+  };
+
+  // immich-go extension: on the AMap basemap the point the user picks is a
+  // GCJ-02 coordinate (the tiles use that datum), but the server stores
+  // WGS-84 like every EXIF-derived location. Convert back on the way out
+  // so the stored pin lands exactly where it was picked; this is a port
+  // of the server's tested transform (internal/maptile), inverted by
+  // iterating the forward pass three times.
+  const toWGS84 = (p: LatLng): LatLng => {
+    const config = serverConfigManager.value as ({ mapProvider?: string } | undefined) | null;
+    if (!config || config.mapProvider !== 'amap') {
+      return p;
+    }
+    const { lat, lng } = p;
+    if (lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271) {
+      return p;
+    }
+    let wLat = lat;
+    let wLng = lng;
+    for (let i = 0; i < 3; i++) {
+      const [gLat, gLng] = wgs84ToGCJ02(wLat, wLng);
+      wLat -= gLat - lat;
+      wLng -= gLng - lng;
+    }
+    return { lat: wLat, lng: wLng };
+  };
+
+  const A = 6378245.0;
+  const EE = 0.00669342162296594323;
+
+  const transformLat = (x: number, y: number): number => {
+    let ret = -100 + 2 * x + 3 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+    ret += ((20 * Math.sin(6 * x * Math.PI) + 20 * Math.sin(2 * x * Math.PI)) * 2) / 3;
+    ret += ((20 * Math.sin(y * Math.PI) + 40 * Math.sin((y / 3) * Math.PI)) * 2) / 3;
+    ret += ((160 * Math.sin((y / 12) * Math.PI) + 320 * Math.sin((y * Math.PI) / 30)) * 2) / 3;
+    return ret;
+  };
+
+  const transformLng = (x: number, y: number): number => {
+    let ret = 300 + x + 2 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+    ret += ((20 * Math.sin(6 * x * Math.PI) + 20 * Math.sin(2 * x * Math.PI)) * 2) / 3;
+    ret += ((20 * Math.sin(x * Math.PI) + 40 * Math.sin((x / 3) * Math.PI)) * 2) / 3;
+    ret += ((150 * Math.sin((x / 12) * Math.PI) + 300 * Math.sin((x / 30) * Math.PI)) * 2) / 3;
+    return ret;
+  };
+
+  const wgs84ToGCJ02 = (lat: number, lng: number): [number, number] => {
+    let dLat = transformLat(lng - 105, lat - 35);
+    let dLng = transformLng(lng - 105, lat - 35);
+    const radLat = (lat / 180) * Math.PI;
+    let magic = Math.sin(radLat);
+    magic = 1 - EE * magic * magic;
+    const sqrtMagic = Math.sqrt(magic);
+    dLat = (dLat * 180) / (((A * (1 - EE)) / (magic * sqrtMagic)) * Math.PI);
+    dLng = (dLng * 180) / ((A / sqrtMagic) * Math.cos(radLat) * Math.PI);
+    return [lat + dLat, lng + dLng];
   };
 
   const getLocation = (name: string, admin1Name?: string, admin2Name?: string): string => {

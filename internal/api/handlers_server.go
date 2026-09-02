@@ -103,6 +103,7 @@ func (s *Server) serverConfig(w http.ResponseWriter, r *http.Request) {
 		PublicUsers:      true,
 		MapLightStyleURL: maptile.StyleURL(s.app.Cfg.Map.Provider, "light", origin(r)),
 		MapDarkStyleURL:  maptile.StyleURL(s.app.Cfg.Map.Provider, "dark", origin(r)),
+		MapProvider:      maptile.Normalize(s.app.Cfg.Map.Provider),
 		OAuthButtonText:  "Login with OAuth",
 	})
 }

@@ -276,6 +276,9 @@ type ServerConfigResponse struct {
 	MaintenanceMode           bool   `json:"maintenanceMode"`
 	MapDarkStyleURL           string `json:"mapDarkStyleUrl"`
 	MapLightStyleURL          string `json:"mapLightStyleUrl"`
+	// MapProvider is an immich-go extension (absent upstream): the web
+	// picker converts GCJ-02 picks back to WGS-84 when it is "amap".
+	MapProvider               string `json:"mapProvider"`
 	MinFaces                  int    `json:"minFaces"`
 	OAuthAccountManagementURL string `json:"oauthAccountManagementUrl"`
 	OAuthButtonText           string `json:"oauthButtonText"`

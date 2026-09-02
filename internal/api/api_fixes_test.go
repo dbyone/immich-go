@@ -423,3 +423,30 @@ func TestTimelineBucketISOTimestamp(t *testing.T) {
 		t.Fatalf("ISO timestamp form: %s", got)
 	}
 }
+
+// TestUpdateAssetLocation: the detail panel's location picker PUTs
+// latitude/longitude; the update must persist into the EXIF record and the
+// response must carry the new exifInfo so the panel map re-renders.
+func TestUpdateAssetLocation(t *testing.T) {
+	h := newTestServer(t)
+	token := loginForTest(t, h, "loc@t.c")
+	id := uploadForTest(t, h, token, testJPEG(t, 1), "loc.jpg")
+
+	lat, lng := 39.9073, 116.3912
+	code, body := doJSON(t, h, http.MethodPut, "/api/assets/"+id, token,
+		map[string]any{"latitude": lat, "longitude": lng})
+	if code != 200 {
+		t.Fatalf("update location: %d", code)
+	}
+	exif := asMap(t, body)["exifInfo"].(map[string]any)
+	if exif["latitude"].(float64) != lat || exif["longitude"].(float64) != lng {
+		t.Fatalf("response exifInfo: %v", exif)
+	}
+
+	// Persisted: a fresh GET sees the same coordinates.
+	_, body = doJSON(t, h, http.MethodGet, "/api/assets/"+id, token, nil)
+	exif = asMap(t, body)["exifInfo"].(map[string]any)
+	if exif["latitude"].(float64) != lat || exif["longitude"].(float64) != lng {
+		t.Fatalf("persisted exifInfo: %v", exif)
+	}
+}

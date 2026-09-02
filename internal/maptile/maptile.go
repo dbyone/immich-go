@@ -110,6 +110,23 @@ func FixCoord(provider string, lat, lng float64) (float64, float64) {
 	return gLat, gLng
 }
 
+// UnfixCoord is the inverse of FixCoord: it maps a point picked on the
+// provider's map (GCJ-02 on AMap tiles) back to the WGS-84 datum used for
+// storage. Iterating the forward transform converges to well under a
+// millidegree in three passes.
+func UnfixCoord(provider string, lat, lng float64) (float64, float64) {
+	if Normalize(provider) != ProviderAMap || !inChina(lat, lng) {
+		return lat, lng
+	}
+	wLat, wLng := lat, lng
+	for range 3 {
+		gLat, gLng := wgs84ToGCJ02(wLat, wLng)
+		wLat -= gLat - lat
+		wLng -= gLng - lng
+	}
+	return wLat, wLng
+}
+
 // inChina is the coarse bounding box used by the common WGS↔GCJ
 // implementations; false positives on the edge just yield the ~0.6"
 // datum offset, which is negligible there.
