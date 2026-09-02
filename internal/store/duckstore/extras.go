@@ -240,24 +240,21 @@ func (s *syncAckStore) List(ctx context.Context, userID string) ([]domain.SyncAc
 }
 
 func (s *syncAckStore) Put(ctx context.Context, userID string, acks []domain.SyncAck) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, a := range acks {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO sync_acks (user_id, type, ack) VALUES (?, ?, ?)
-			ON CONFLICT (user_id, type, ack) DO NOTHING`, userID, a.Type, a.Ack); err != nil {
-			return err
+	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
+		for _, a := range acks {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO sync_acks (user_id, type, ack) VALUES (?, ?, ?)
+				ON CONFLICT (user_id, type, ack) DO NOTHING`, userID, a.Type, a.Ack); err != nil {
+				return err
+			}
 		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 func (s *syncAckStore) DeleteTypes(ctx context.Context, userID string, types []string) error {
 	if len(types) == 0 {
-		_, err := s.db.ExecContext(ctx, `DELETE FROM sync_acks WHERE user_id = ?`, userID)
+		_, err := (*Store)(s).exec(ctx, `DELETE FROM sync_acks WHERE user_id = ?`, userID)
 		return err
 	}
 	marks := strings.TrimSuffix(strings.Repeat("?, ", len(types)), ", ")
@@ -266,7 +263,7 @@ func (s *syncAckStore) DeleteTypes(ctx context.Context, userID string, types []s
 	for _, t := range types {
 		args = append(args, t)
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err := (*Store)(s).exec(ctx,
 		`DELETE FROM sync_acks WHERE user_id = ? AND type IN (`+marks+`)`, args...)
 	return err
 }
@@ -289,7 +286,7 @@ func (s *metadataStore) Get(ctx context.Context, key string) (string, bool, erro
 }
 
 func (s *metadataStore) Set(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := (*Store)(s).exec(ctx, `
 		INSERT INTO system_metadata (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
@@ -298,7 +295,7 @@ func (s *metadataStore) Set(ctx context.Context, key, value string) error {
 // SetIfAbsent claims a key atomically: INSERT ... DO NOTHING keeps the
 // second caller from winning.
 func (s *metadataStore) SetIfAbsent(ctx context.Context, key, value string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := (*Store)(s).exec(ctx, `
 		INSERT INTO system_metadata (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO NOTHING`, key, value)
 	if err != nil {

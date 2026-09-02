@@ -42,7 +42,7 @@ func (s *userStore) Create(ctx context.Context, u *domain.User) error {
 		return err
 	}
 	u.UpdateID = uid
-	_, err = s.db.ExecContext(ctx, `
+	_, err = (*Store)(s).exec(ctx, `
 		INSERT INTO users (`+userColumns+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Email, u.Password, u.Name, u.IsAdmin, u.ShouldChangePassword,
@@ -60,7 +60,7 @@ func (s *userStore) Update(ctx context.Context, u *domain.User) error {
 		return err
 	}
 	u.UpdateID = uid
-	res, err := s.db.ExecContext(ctx, `
+	res, err := (*Store)(s).exec(ctx, `
 		UPDATE users SET
 			email = ?, password = ?, name = ?, is_admin = ?, should_change_password = ?,
 			avatar_color = ?, profile_image_path = ?, storage_label = ?, is_onboarded = ?,
@@ -200,7 +200,7 @@ func scanSession(scanner rowScanner) (*domain.Session, error) {
 }
 
 func (s *sessionStore) Create(ctx context.Context, sess *domain.Session) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := (*Store)(s).exec(ctx, `
 		INSERT INTO sessions (`+sessionColumns+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID, sess.TokenHash, sess.UserID, sess.DeviceOS, sess.DeviceType,
@@ -209,7 +209,7 @@ func (s *sessionStore) Create(ctx context.Context, sess *domain.Session) error {
 }
 
 func (s *sessionStore) Update(ctx context.Context, sess *domain.Session) error {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := (*Store)(s).exec(ctx, `
 		UPDATE sessions SET
 			token_hash = ?, user_id = ?, device_os = ?, device_type = ?, app_version = ?,
 			updated_at = ?, expires_at = ?
@@ -223,7 +223,7 @@ func (s *sessionStore) Update(ctx context.Context, sess *domain.Session) error {
 }
 
 func (s *sessionStore) Delete(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
+	res, err := (*Store)(s).exec(ctx, `DELETE FROM sessions WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -231,7 +231,7 @@ func (s *sessionStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *sessionStore) DeleteAllForUser(ctx context.Context, userID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	_, err := (*Store)(s).exec(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
 	return err
 }
 
@@ -299,7 +299,7 @@ func scanAPIKey(scanner rowScanner) (*domain.APIKey, error) {
 }
 
 func (s *apiKeyStore) Create(ctx context.Context, k *domain.APIKey) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := (*Store)(s).exec(ctx, `
 		INSERT INTO api_keys (`+apiKeyColumns+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		k.ID, k.Name, k.KeyHash, k.UserID, joinPermissions(k.Permissions),
@@ -308,7 +308,7 @@ func (s *apiKeyStore) Create(ctx context.Context, k *domain.APIKey) error {
 }
 
 func (s *apiKeyStore) Update(ctx context.Context, k *domain.APIKey) error {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := (*Store)(s).exec(ctx, `
 		UPDATE api_keys SET
 			name = ?, key_hash = ?, user_id = ?, permissions = ?, updated_at = ?
 		WHERE id = ?`,
@@ -320,7 +320,7 @@ func (s *apiKeyStore) Update(ctx context.Context, k *domain.APIKey) error {
 }
 
 func (s *apiKeyStore) Delete(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE id = ?`, id)
+	res, err := (*Store)(s).exec(ctx, `DELETE FROM api_keys WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

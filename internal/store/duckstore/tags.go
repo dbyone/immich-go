@@ -45,7 +45,7 @@ func (s *tagStore) Create(ctx context.Context, t *domain.Tag) error {
 		t.CreatedAt = time.Now().UTC()
 	}
 	t.UpdatedAt = t.CreatedAt
-	_, err = s.db.ExecContext(ctx, `
+	_, err = (*Store)(s).exec(ctx, `
 		INSERT INTO tags (id, user_id, name, value, parent_id, color, created_at, updated_at, update_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.UserID, t.Name, t.Value, nullStrPtr(t.ParentID), nullStrPtr(t.Color), t.CreatedAt, t.UpdatedAt, t.UpdateID)
@@ -59,7 +59,7 @@ func (s *tagStore) Update(ctx context.Context, t *domain.Tag) error {
 	}
 	t.UpdateID = uid
 	t.UpdatedAt = time.Now().UTC()
-	res, err := s.db.ExecContext(ctx, `
+	res, err := (*Store)(s).exec(ctx, `
 		UPDATE tags SET name = ?, value = ?, parent_id = ?, color = ?, updated_at = ?, update_id = ?
 		WHERE id = ?`,
 		t.Name, t.Value, nullStrPtr(t.ParentID), nullStrPtr(t.Color), t.UpdatedAt, t.UpdateID, t.ID)
@@ -74,11 +74,12 @@ func (s *tagStore) Update(ctx context.Context, t *domain.Tag) error {
 }
 
 func (s *tagStore) Delete(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	return (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
+		return s.deleteTx(ctx, tx, id)
+	})
+}
+
+func (s *tagStore) deleteTx(ctx context.Context, tx *sql.Tx, id string) error {
 	var userID string
 	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM tags WHERE id = ?`, id).Scan(&userID); err != nil {
 		if err == sql.ErrNoRows {
@@ -121,7 +122,7 @@ func (s *tagStore) Delete(ctx context.Context, id string) error {
 	// Upstream does not sync tag deletions (no SyncEntityType for tags);
 	// asset rows carry their tags, and the delete bumps above already
 	// cover attached assets, so no tombstone is recorded here.
-	return tx.Commit()
+	return nil
 }
 
 func (s *tagStore) Get(ctx context.Context, id string) (*domain.Tag, error) {
@@ -291,47 +292,43 @@ func (s *tagStore) bumpAssets(ctx context.Context, tx *sql.Tx, assetIDs []string
 }
 
 func (s *tagStore) Attach(ctx context.Context, tagID string, assetIDs []string) (int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	added := 0
+	err := (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
+		for _, assetID := range assetIDs {
+			res, err := tx.ExecContext(ctx, `
+				INSERT INTO tag_assets (tag_id, asset_id, attached_at) VALUES (?, ?, ?)
+				ON CONFLICT (tag_id, asset_id) DO NOTHING`, tagID, assetID, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				added++
+			}
+		}
+		return s.bumpAssets(ctx, tx, assetIDs)
+	})
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
-	added := 0
-	for _, assetID := range assetIDs {
-		res, err := tx.ExecContext(ctx, `
-			INSERT INTO tag_assets (tag_id, asset_id, attached_at) VALUES (?, ?, ?)
-			ON CONFLICT (tag_id, asset_id) DO NOTHING`, tagID, assetID, time.Now().UTC())
-		if err != nil {
-			return 0, err
-		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			added++
-		}
-	}
-	if err := s.bumpAssets(ctx, tx, assetIDs); err != nil {
-		return 0, err
-	}
-	return added, tx.Commit()
+	return added, nil
 }
 
 func (s *tagStore) Detach(ctx context.Context, tagID string, assetIDs []string) (int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	removed := 0
+	err := (*Store)(s).tx(ctx, func(tx *sql.Tx) error {
+		for _, assetID := range assetIDs {
+			res, err := tx.ExecContext(ctx, `DELETE FROM tag_assets WHERE tag_id = ? AND asset_id = ?`, tagID, assetID)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				removed++
+			}
+		}
+		return s.bumpAssets(ctx, tx, assetIDs)
+	})
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
-	removed := 0
-	for _, assetID := range assetIDs {
-		res, err := tx.ExecContext(ctx, `DELETE FROM tag_assets WHERE tag_id = ? AND asset_id = ?`, tagID, assetID)
-		if err != nil {
-			return 0, err
-		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			removed++
-		}
-	}
-	if err := s.bumpAssets(ctx, tx, assetIDs); err != nil {
-		return 0, err
-	}
-	return removed, tx.Commit()
+	return removed, nil
 }

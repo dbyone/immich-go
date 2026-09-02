@@ -21,6 +21,10 @@ func nullableString(s string) any {
 
 // nextUpdateID draws from the global change sequence (writer conn).
 func (s *Store) nextUpdateID(ctx context.Context) (int64, error) {
+	// nextval advances the sequence — a write under optimistic concurrency,
+	// so it takes the write lock too.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	var id int64
 	if err := s.db.QueryRowContext(ctx, `SELECT nextval('update_id_seq')`).Scan(&id); err != nil {
 		return 0, err
@@ -227,14 +231,14 @@ func (s *partnerStore) Create(ctx context.Context, p *domain.Partner) error {
 	now := time.Now().UTC()
 	p.ID = crypto.NewUUID()
 	p.CreatedAt, p.UpdatedAt = now, now
-	_, err := s.db.ExecContext(ctx,
+	_, err := (*Store)(s).exec(ctx,
 		`INSERT INTO partners (`+partnerColumns+`) VALUES (?, ?, ?, ?, ?, ?)`,
 		p.ID, p.OwnerID, p.UserID, p.InTimeline, p.CreatedAt, p.UpdatedAt)
 	return err
 }
 
 func (s *partnerStore) Update(ctx context.Context, p *domain.Partner) error {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := (*Store)(s).exec(ctx, `
 		UPDATE partners SET in_timeline = ?, updated_at = ? WHERE id = ?`,
 		p.InTimeline, p.UpdatedAt, p.ID)
 	if err != nil {
@@ -244,7 +248,7 @@ func (s *partnerStore) Update(ctx context.Context, p *domain.Partner) error {
 }
 
 func (s *partnerStore) Delete(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM partners WHERE id = ?`, id)
+	res, err := (*Store)(s).exec(ctx, `DELETE FROM partners WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

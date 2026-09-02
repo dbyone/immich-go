@@ -8,6 +8,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"strings"
+	"sync"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 
@@ -28,6 +31,11 @@ type Store struct {
 	db   *sql.DB
 	ro   *sql.DB
 	owns bool
+	// writeMu serializes every mutation: DuckDB's optimistic concurrency
+	// aborts overlapping write transactions (write-write conflict).
+	writeMu sync.Mutex
+	// roMax caches the reader-pool size so conflict cleanup can restore it.
+	roMax int
 }
 
 // OpenDB opens (or creates) a DuckDB database file constrained to a
@@ -68,7 +76,43 @@ func NewWithReadPool(db, ro *sql.DB) (*Store, error) {
 	if err := s.init(); err != nil {
 		return nil, err
 	}
+	// Startup self-heal: a failed concurrent COMMIT can leave phantom
+	// transaction versions inside a UNIQUE index (DuckDB does not fully
+	// roll back index entries of a conflicted transaction). Every later
+	// write to that key then fails with a persistent "write-write
+	// conflict" that survives restarts. Probing with a no-op rewrite of
+	// the first row reproduces the failure cheaply; rebuilding the index
+	// drops the phantom versions and cures it.
+	if err := s.selfHealUniqueIndex("users", "users_email_idx", "email"); err != nil {
+		log.Printf("[duckstore] unique-index self-heal: %v", err)
+	}
 	return s, nil
+}
+
+// SetReaderPoolSize records the configured reader count for conflict
+// cleanup (restores the pool after a forced close).
+func (s *Store) SetReaderPoolSize(n int) { s.roMax = n }
+
+// selfHealUniqueIndex probes an index for phantom conflict versions by
+// rewriting the first row's indexed column to itself; on a write-write
+// conflict it rebuilds the index, which clears the stale versions.
+func (s *Store) selfHealUniqueIndex(table, index, column string) error {
+	probe := "UPDATE " + table + " SET " + column + " = " + column +
+		" WHERE " + column + " = (SELECT min(" + column + ") FROM " + table + ")"
+	if _, err := s.db.Exec(probe); err == nil || !isWriteConflict(err) {
+		return nil
+	}
+	log.Printf("[duckstore] stale versions detected in %s; rebuilding", index)
+	if _, err := s.db.Exec("DROP INDEX IF EXISTS " + index); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("CREATE UNIQUE INDEX " + index + " ON " + table + " (" + column + ")"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(probe); err != nil {
+		return fmt.Errorf("rebuild did not cure the conflict: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
@@ -330,16 +374,78 @@ func splitPermissions(s string) []string {
 }
 
 // tx runs fn inside a transaction on the shared single connection.
+// All writes serialize on writeMu (DuckDB's embedded single-writer model)
+// and a write-write conflict retries after clearing any transaction the
+// failed COMMIT may have stranded on the connection.
 func (s *Store) tx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var lastErr error
+	for range 3 {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if err := fn(tx); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			lastErr = err
+			if !isWriteConflict(err) {
+				return err
+			}
+			s.rollbackStranded(ctx)
+			continue
+		}
+		return nil
 	}
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
+	return lastErr
+}
+
+// exec is the autocommit write path: serialized like tx and retried on a
+// write-write conflict after clearing the connection.
+func (s *Store) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var res sql.Result
+	var lastErr error
+	for range 3 {
+		var err error
+		res, err = s.db.ExecContext(ctx, query, args...)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+		if !isWriteConflict(err) {
+			return nil, err
+		}
+		s.rollbackStranded(ctx)
 	}
-	return tx.Commit()
+	return nil, lastErr
+}
+
+// rollbackStranded clears a transaction the failed COMMIT may have left
+// open on the writer connection, and recycles the reader pool (its
+// connections are full DuckDB connections where a stranded write
+// transaction would also survive).
+func (s *Store) rollbackStranded(ctx context.Context) {
+	if _, err := s.db.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`); err != nil {
+		log.Printf("[duckstore] conflict cleanup rollback (writer): %v", err)
+	}
+	if s.ro != nil && s.ro != s.db {
+		max := s.roMax
+		if max <= 0 {
+			max = 4
+		}
+		s.ro.SetMaxOpenConns(0)
+		s.ro.SetMaxOpenConns(max)
+	}
+}
+
+// isWriteConflict matches DuckDB's optimistic-concurrency abort message.
+func isWriteConflict(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "write-write conflict")
 }
 
 var _ store.Store = (*Store)(nil)

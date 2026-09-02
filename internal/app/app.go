@@ -107,6 +107,9 @@ func New(cfg *config.Config, st store.Store, log *slog.Logger) (*App, error) {
 			db.Close()
 			return nil, fmt.Errorf("init entity store: %w", err)
 		}
+		if ds, ok := st.(*duckstore.Store); ok {
+			ds.SetReaderPoolSize(cfg.DuckDBReaders)
+		}
 	}
 	log.Info("duckdb ready", "path", cfg.DuckDBPath, "dim", cfg.VectorDim,
 		"entities", storeKind(st), "sqlCosine", vectors.HasSQLCosine())

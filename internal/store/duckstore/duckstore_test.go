@@ -287,3 +287,49 @@ func TestSetIfAbsentClaimsOnce(t *testing.T) {
 		t.Fatalf("value must stay from first claim: %q %v", v, ok)
 	}
 }
+
+// TestConcurrentUserUpdates: DuckDB's optimistic concurrency aborts
+// overlapping writes to the same row ("write-write conflict"), which
+// surfaced as intermittent 500s on PUT /users/me/preferences. All writes
+// now serialize on the store's write lock, so concurrent updates to the
+// same user must all succeed.
+func TestConcurrentUserUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "immich.duckdb")
+	ctx := context.Background()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	u := testUser("u1", "race@t.c")
+	if err := s.Users().Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	errCh := make(chan error, n)
+	for i := range n {
+		errCh <- func() error {
+			clone := *u
+			clone.Preferences = `{"albums":{"iteration":` + itoa(i) + `}}`
+			return s.Users().Update(ctx, &clone)
+		}()
+	}
+	for range n {
+		if err := <-errCh; err != nil {
+			t.Fatalf("concurrent update failed: %v", err)
+		}
+	}
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	digits := ""
+	for ; i > 0; i /= 10 {
+		digits = string(rune('0'+i%10)) + digits
+	}
+	return digits
+}
