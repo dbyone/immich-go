@@ -86,7 +86,36 @@ func NewWithReadPool(db, ro *sql.DB) (*Store, error) {
 	if err := s.selfHealUniqueIndex("users", "users_email_idx", "email"); err != nil {
 		log.Printf("[duckstore] unique-index self-heal: %v", err)
 	}
+	// Ghost entries also land in NON-unique indexes, where they fail
+	// silently: index scans skip rows (the photos timeline returned an
+	// empty list while a sequential scan saw every asset). A write probe
+	// cannot detect that, so the hot read-path indexes are rebuilt
+	// unconditionally at boot — cheap on small libraries, seconds on
+	// large ones, and the only reliable cure.
+	s.rebuildGhostProneIndexes()
 	return s, nil
+}
+
+// rebuildGhostProneIndexes recreates the secondary indexes the timeline
+// and auth read paths scan, clearing any phantom entries left behind by
+// conflicted transactions.
+func (s *Store) rebuildGhostProneIndexes() {
+	for _, idx := range [][3]string{
+		{"assets", "assets_owner_idx", "owner_id"},
+		{"assets", "assets_owner_checksum_idx", "owner_id, checksum"},
+		{"sessions", "sessions_user_idx", "user_id"},
+		{"api_keys", "api_keys_user_idx", "user_id"},
+		{"albums", "albums_owner_idx", "owner_id"},
+	} {
+		table, name, cols := idx[0], idx[1], idx[2]
+		if _, err := s.db.Exec("DROP INDEX IF EXISTS " + name); err != nil {
+			log.Printf("[duckstore] index rebuild drop %s: %v", name, err)
+			continue
+		}
+		if _, err := s.db.Exec("CREATE INDEX " + name + " ON " + table + " (" + cols + ")"); err != nil {
+			log.Printf("[duckstore] index rebuild create %s: %v", name, err)
+		}
+	}
 }
 
 // SetReaderPoolSize records the configured reader count for conflict

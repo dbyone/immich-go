@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,8 +24,21 @@ func main() {
 
 	cfg := config.Load()
 
-	// Entities persist to DuckDB — the single supported store.
+	// Entities persist to DuckDB — the single supported store. A hard
+	// kill (taskkill /F) can leave a write-ahead log whose replay fails
+	// ("Failure while replaying WAL" / "applying buffered appends"): the
+	// server would then never boot again. Move the corrupt WAL aside —
+	// losing only writes after the last checkpoint — and try once more.
 	a, err := app.New(cfg, nil, logger)
+	if err != nil && walReplayFailed(err) {
+		wal := cfg.DuckDBPath + ".wal"
+		logger.Warn("unreplayable WAL detected; moving aside and retrying", "wal", wal, "err", err)
+		if rnErr := os.Rename(wal, wal+".corrupt"); rnErr != nil {
+			logger.Error("cannot move corrupt WAL", "err", rnErr)
+		} else {
+			a, err = app.New(cfg, nil, logger)
+		}
+	}
 	if err != nil {
 		logger.Error("failed to initialize", "err", err)
 		os.Exit(1)
@@ -74,4 +88,13 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// walReplayFailed matches DuckDB's WAL-replay failure messages.
+func walReplayFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "replaying WAL") || strings.Contains(msg, "buffered appends")
 }
