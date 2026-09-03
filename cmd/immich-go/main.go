@@ -9,13 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"immich-go/internal/api"
 	"immich-go/internal/app"
 	"immich-go/internal/config"
+	"immich-go/internal/store/duckstore"
 )
 
 func main() {
@@ -30,12 +30,13 @@ func main() {
 	// server would then never boot again. Move the corrupt WAL aside —
 	// losing only writes after the last checkpoint — and try once more.
 	a, err := app.New(cfg, nil, logger)
-	if err != nil && walReplayFailed(err) {
-		wal := cfg.DuckDBPath + ".wal"
-		logger.Warn("unreplayable WAL detected; moving aside and retrying", "wal", wal, "err", err)
-		if rnErr := os.Rename(wal, wal+".corrupt"); rnErr != nil {
-			logger.Error("cannot move corrupt WAL", "err", rnErr)
+	if err != nil && duckstore.IsWALReplayError(err) {
+		backup, mvErr := duckstore.MoveWALAside(cfg.DuckDBPath)
+		if mvErr != nil {
+			logger.Error("cannot move corrupt WAL", "err", mvErr)
 		} else {
+			logger.Warn("unreplayable WAL detected; moved aside, retrying",
+				"backup", backup, "err", err)
 			a, err = app.New(cfg, nil, logger)
 		}
 	}
@@ -48,6 +49,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	a.Jobs.Start(ctx)
+	a.StartCheckpointLoop(ctx, time.Minute)
 
 	server := &http.Server{
 		Addr:              joinHostPort(cfg.Host, cfg.Port),
@@ -88,13 +90,4 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
-}
-
-// walReplayFailed matches DuckDB's WAL-replay failure messages.
-func walReplayFailed(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "replaying WAL") || strings.Contains(msg, "buffered appends")
 }

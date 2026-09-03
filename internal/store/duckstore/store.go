@@ -9,8 +9,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 
@@ -121,6 +123,46 @@ func (s *Store) rebuildGhostProneIndexes() {
 // SetReaderPoolSize records the configured reader count for conflict
 // cleanup (restores the pool after a forced close).
 func (s *Store) SetReaderPoolSize(n int) { s.roMax = n }
+
+// Checkpoint flushes the write-ahead log into the database file and
+// truncates it. Running it periodically (and on graceful shutdown) keeps
+// the WAL tiny, so a hard kill loses at most one interval of writes and
+// leaves little replay surface for corruption.
+func (s *Store) Checkpoint() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if _, err := s.db.Exec(`CHECKPOINT`); err != nil {
+		return fmt.Errorf("checkpoint: %w", err)
+	}
+	return nil
+}
+
+// IsWALReplayError reports whether err came from DuckDB failing to
+// replay the write-ahead log at open time (garbage or a torn write from
+// a hard kill).
+func IsWALReplayError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "replaying WAL") ||
+		strings.Contains(msg, "buffered appends") ||
+		strings.Contains(msg, "WAL file")
+}
+
+// MoveWALAside renames the write-ahead log next to the database to a
+// timestamped backup so the database can open without replaying it. The
+// timestamp keeps every backup (os.Rename on Windows cannot overwrite an
+// existing file). The caller loses only writes after the last
+// checkpoint — the alternative is a server that never boots again.
+func MoveWALAside(dbPath string) (backup string, err error) {
+	wal := dbPath + ".wal"
+	backup = fmt.Sprintf("%s.corrupt-%d", wal, time.Now().Unix())
+	if err := os.Rename(wal, backup); err != nil {
+		return "", fmt.Errorf("move WAL %s aside: %w", wal, err)
+	}
+	return backup, nil
+}
 
 // selfHealUniqueIndex probes an index for phantom conflict versions by
 // rewriting the first row's indexed column to itself; on a write-write

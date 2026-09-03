@@ -2,6 +2,8 @@ package duckstore
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -332,4 +334,83 @@ func itoa(i int) string {
 		digits = string(rune('0'+i%10)) + digits
 	}
 	return digits
+}
+
+// TestWALRecoveryOnBoot covers the boot-time WAL recovery toolkit:
+// IsWALReplayError recognizes DuckDB's replay failure messages (a hard
+// kill can leave a torn WAL whose replay aborts), MoveWALAside renames
+// the WAL to a unique backup (Windows rename cannot overwrite), and the
+// database reopens with its data once the WAL is out of the way. Note
+// DuckDB silently ignores obviously-garbage WAL bytes; the real-world
+// failures matched here are the semantic replay aborts seen in
+// production ("applying buffered appends", "replaying WAL").
+func TestWALRecoveryOnBoot(t *testing.T) {
+	for _, msg := range []string{
+		`Failure while replaying WAL file "x.wal": ...`,
+		`INTERNAL Error: error while applying buffered appends: TransactionContext Error: ...`,
+	} {
+		if !IsWALReplayError(errors.New(msg)) {
+			t.Fatalf("IsWALReplayError should match %q", msg)
+		}
+	}
+	if IsWALReplayError(errors.New("some unrelated error")) {
+		t.Fatal("IsWALReplayError matched an unrelated error")
+	}
+
+	path := filepath.Join(t.TempDir(), "immich.duckdb")
+	ctx := context.Background()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Users().Create(ctx, testUser("u1", "wal@t.c")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the damaged WAL. DuckDB ignores blatant garbage, so the
+	// first open may either fail with a replay error (recovery path) or
+	// succeed (nothing to do); both must converge on readable data.
+	if err := os.WriteFile(path+".wal", []byte("torn write-ahead log bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path)
+	if err != nil {
+		if !IsWALReplayError(err) {
+			t.Fatalf("unexpected non-WAL open error: %v", err)
+		}
+		backup, mvErr := MoveWALAside(path)
+		if mvErr != nil {
+			t.Fatal(mvErr)
+		}
+		if _, statErr := os.Stat(backup); statErr != nil {
+			t.Fatalf("backup WAL missing: %v", statErr)
+		}
+		// A second backup must not collide with the first (Windows
+		// rename cannot overwrite): recreate a WAL and move it again.
+		if err := os.WriteFile(path+".wal", []byte("another torn wal"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		backup2, mvErr := MoveWALAside(path)
+		if mvErr != nil {
+			t.Fatal(mvErr)
+		}
+		if backup2 == backup {
+			t.Fatal("second backup overwrote the first")
+		}
+		s2, err = Open(path)
+		if err != nil {
+			t.Fatalf("reopen after WAL removal: %v", err)
+		}
+	}
+	defer s2.Close()
+	if _, err := s2.Users().GetByEmail(ctx, "wal@t.c"); err != nil {
+		t.Fatalf("user lost after WAL recovery: %v", err)
+	}
 }

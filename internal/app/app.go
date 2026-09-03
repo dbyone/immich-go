@@ -196,6 +196,14 @@ func (a *App) Close() {
 	}
 	a.ML.Teardown()
 	_ = a.Vectors.Close()
+	// Flush the write-ahead log before the pools close: a graceful
+	// shutdown then leaves an empty WAL, removing the replay surface a
+	// hard kill could corrupt.
+	if ds, ok := a.Store.(*duckstore.Store); ok {
+		if err := ds.Checkpoint(); err != nil {
+			a.Log.Warn("shutdown checkpoint failed", "err", err)
+		}
+	}
 	_ = a.Store.Close()
 	if a.db != nil {
 		_ = a.db.Close()
@@ -203,6 +211,33 @@ func (a *App) Close() {
 	if a.ro != nil && a.ro != a.db {
 		_ = a.ro.Close()
 	}
+}
+
+// StartCheckpointLoop truncates the write-ahead log on an interval (and
+// stops when ctx is cancelled), bounding how much a hard kill can lose
+// or corrupt. Runs until the process exits; failures only log.
+func (a *App) StartCheckpointLoop(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				ds, ok := a.Store.(*duckstore.Store)
+				if !ok {
+					return
+				}
+				if err := ds.Checkpoint(); err != nil {
+					a.Log.Warn("periodic checkpoint failed", "err", err)
+				}
+			}
+		}
+	}()
 }
 
 func (a *App) registerJobs() {
